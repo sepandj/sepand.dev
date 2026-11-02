@@ -349,7 +349,24 @@ async def site_png():
 
 @app.get("/robots.txt")
 def robots():
-    return Response("User-agent: *\nAllow: /\nDisallow: /render/\nDisallow: /api/\n", media_type="text/plain")
+    return Response("User-agent: *\nAllow: /\nDisallow: /render/\nDisallow: /api/\n"
+                    f"Sitemap: {PUBLIC}/sitemap.xml\n", media_type="text/plain")
+
+
+@app.get("/sitemap.xml")
+def sitemap():
+    """The index itself and every site it opens onto. (The property in Search
+    Console is the whole sepand.dev domain, so the other hosts may be listed.)"""
+    with pool.connection() as c:
+        row = c.execute("SELECT max(created_at) FROM visits").fetchone()
+    last = (row[0] if row and row[0] else None)
+    mod = f"<lastmod>{last.astimezone(timezone.utc).strftime('%Y-%m-%d')}</lastmod>" if last else ""
+    urls = [(PUBLIC + "/", mod, "always", "1.0")]
+    urls += [(s["url"].rstrip("/") + "/", "", "weekly", "0.8") for s in current_sites()]
+    body = "".join(f"<url><loc>{u}</loc>{m}<changefreq>{f}</changefreq><priority>{p}</priority></url>" for u, m, f, p in urls)
+    return Response('<?xml version="1.0" encoding="UTF-8"?>'
+                    f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{body}</urlset>',
+                    media_type="application/xml")
 
 
 @app.get("/healthz")
