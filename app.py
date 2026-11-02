@@ -65,7 +65,9 @@ CREATE INDEX IF NOT EXISTS visits_lz ON visits (lz);
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS sites jsonb;
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS engine int NOT NULL DEFAULT 1;
 """
-ENGINE = 14
+# Engine 13 (static/art-v13.js) is the current style again; engine 14 (art.js)
+# was tried and reverted, and only draws the visits made with it.
+ENGINE = 13
 FIRST_SITES = [{"name": "not alone", "url": "https://notalone.sepand.dev"}]
 
 
