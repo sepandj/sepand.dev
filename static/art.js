@@ -1,4 +1,4 @@
-// sepand.dev, engine 12: the history, poured as oil on a thin running slick.
+// sepand.dev, engine 13: the history, poured as oil on a thin running slick.
 //
 // Every visit that has ever happened is a thin stream of coloured oil, poured
 // along a path its hash chooses. A fluid simulation carries it: heavy, damped,
@@ -17,8 +17,7 @@
 export const LOOP = 60; // seconds for the light to come back around
 export const MAX_SITES = 8;
 export const fixedScale = true;
-export const namesInArt = false;
-export const movingDoors = true;
+export const namesInArt = true;
 
 const TAU = Math.PI * 2;
 
@@ -118,18 +117,22 @@ function textWidth(text, px) {
   return measurer.measureText(text).width + text.length * px * 0.18;     // letter spacing
 }
 export function placeDoors(state, sites, W, H) {
-  const out = [];
+  const m = Math.min(W, H), out = [];
   for (const [i, s] of sites.slice(0, MAX_SITES).entries()) {
     const R = rng(fnv(state.hash + "|" + s.name));
-    const rPx = clamp(textWidth(s.name, 14) / 2 + 22, 46, 110);
+    const px = Math.round(clamp(m * (0.06 + R() * 0.05), 24, 64));
+    const angle = (R() - 0.5) * 0.5;
+    const w = textWidth(s.name, px), h = px * 1.2;
+    const half = Math.abs(Math.cos(angle)) * w / 2 + Math.abs(Math.sin(angle)) * h / 2 + 16;
+    const halfY = Math.abs(Math.sin(angle)) * w / 2 + Math.abs(Math.cos(angle)) * h / 2 + 16;
     let best = null;
     for (let t = 0; t < 40; t++) {
-      const x = rPx + 20 + R() * Math.max(1, W - 2 * rPx - 40), y = rPx + 90 + R() * Math.max(1, H - 2 * rPx - 220);
-      const gap = out.length ? Math.min(...out.map(o => Math.hypot(o.x - x, o.y - y) - o.rPx - rPx)) : Infinity;
+      const x = half + R() * Math.max(1, W - 2 * half), y = 80 + halfY + R() * Math.max(1, H - 200 - 2 * halfY);
+      const gap = out.length ? Math.min(...out.map(o => Math.hypot(o.x - x, o.y - y) - o.w / 2 - w / 2)) : Infinity;
       if (!best || gap > best.gap) best = { x, y, gap };
-      if (gap > 30) break;
+      if (gap > 40) break;
     }
-    out.push({ ...s, i, x: best.x, y: best.y, rPx });
+    out.push({ ...s, i, x: best.x, y: best.y, px, angle, w, h });
   }
   return out;
 }
@@ -417,6 +420,10 @@ vec3 shade(vec2 uv){
   col = mix(col, col * 0.4 + film2 * 0.75, m * 0.7) + m * pow(nh, 50.0) * 0.7;
   float mw = max(fwidth(marks.r), 1e-4);
   col += film2 * (1.0 - smoothstep(0.0, 2.0 * uPx, abs(marks.r - 0.5) / mw)) * 0.9;
+  // The names: set into the surface, the oil heaped against their sides.
+  vec4 mk = texture(uMask, uv);
+  col += cover * mk.g * (1.0 - mk.r) * 0.18;
+  col = mix(col, uInk, smoothstep(0.35, 0.65, mk.r));
   return col;
 }
 void main(){
@@ -627,24 +634,8 @@ function plan(state, doors, W, H, maxPours = MAX_POURS) {
     }
     return { i, E, r, path, metal, amt: mine ? 1.7 : 1.1 };
   };
-  // Each site is one of the pours: thick oil in its own colour, poured from
-  // where the visit set it down, at a point in the history the visit chooses.
   const streams = idx.map(i => stream(i, false));
-  for (const d of doors) {
-    const R = rng(fnv(state.hash + "#" + d.name));
-    const [x0, y0] = toSim(d.x, d.y), E = streams.length ? streams[0].E : getEra(1);
-    const path = [];
-    let x = x0, y = y0, heading = R() * TAU;
-    for (let k = 0; k < 12; k++) {
-      heading += (R() - 0.5) * 0.9;
-      x += Math.cos(heading) * 0.0015; y += Math.sin(heading) * 0.0015;
-      path.push({ x, y, push: [0, 0], c: null });
-    }
-    // Clear oil: no colour of its own (the ground's colour is filled in when poured).
-    const at = Math.floor(R() * (streams.length + 1));
-    streams.splice(at, 0, { i: -1, door: d, E: streams[Math.min(at, streams.length - 1)]?.E || E, r: d.rPx / M * 0.55, path, amt: 1.6 });
-  }
-  return { n, crop, M, W, H, doors, toSim, mask: nameMask([], 256, toSim, M), streams, mine: stream(n - 1, true) };
+  return { n, crop, M, W, H, doors, toSim, mask: nameMask(doors, 1024, toSim, M), streams, mine: stream(n - 1, true) };
 }
 
 // ---- live: the pour, watched ---------------------------------------------------------
@@ -750,14 +741,10 @@ export function createArt(canvas, opts = {}) {
     },
     draw(theta) {
       if (!done) art.advance(perFrame);
-      S.show(P.crop, theta, genes, canvas.width / (P.crop[2] * O.dyeRes),
-        drops.filter(d => d.on).map(d => ({ c: d.c, R: d.R, inv: d.inv })));
+      S.show(P.crop, theta, genes, canvas.width / (P.crop[2] * O.dyeRes), []);
     },
     // Where each site's drop is now, in css px (for its link and the card).
-    doorCenters() {
-      return drops.map(dr => ({ ...dr.d, on: dr.on,
-        x: (dr.c[0] - P.crop[0]) / P.crop[2] * P.W, y: (1 - (dr.c[1] - P.crop[1]) / P.crop[3]) * P.H, rPx: Math.max(dr.R, 0.001) * P.M }));
-    },
+    doorCenters() { return P.doors; },
     snapshot() { return canvas; },
     get done() { return done; },
   };
@@ -776,7 +763,7 @@ export function caption(src, state, genes, doors, scale) {
   g.shadowColor = "rgba(0,0,0,.55)"; g.shadowBlur = 4 * scale;
   g.font = `600 ${Math.round(13 * scale)}px ${MONO}`;
   if ("letterSpacing" in g) g.letterSpacing = `${2.2 * scale}px`;
-  for (const d of doors) g.fillText(d.name, d.x * scale, d.y * scale);
+  if (!namesInArt) for (const d of doors) g.fillText(d.name, d.x * scale, d.y * scale);
   g.shadowBlur = 0;
   if ("letterSpacing" in g) g.letterSpacing = "0px";
   g.textAlign = "left"; g.textBaseline = "alphabetic";

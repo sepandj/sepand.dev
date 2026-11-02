@@ -39,7 +39,8 @@ oldest first, with this visit's thread last and brightest.
   that pours slide on (`art-v11.js`), 12 = each site as a thick drop that pours
   in at its place in the sequence, rides and slightly stretches with the flow as
   a body the oil goes around, and rests when the pour ends; the ground grain and
-  slick are carried by the same currents (`art.js`).
+  slick are carried by the same currents (`art-v12.js`), 13 = engine 12 with the
+  site names set back into the surface as large type the oil flows around (`art.js`).
 
 Runs in the not-alone container as user `sepandidx` (`deploy/sepand-index.service`,
 port 8001), database `sepandidx`, behind Caddy (`deploy/Caddyfile.snippet`).
