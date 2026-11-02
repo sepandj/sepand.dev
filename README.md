@@ -25,7 +25,8 @@ oldest first, with this visit's thread last and brightest.
   piece that follows while older links still replay as they were.
 - **Engines:** each visit records the engine that drew it and is always drawn
   by it: 1 = filled colour (`art-v1.js`), 2 and 3 = single line fields
-  (`art-v2.js`, `art-v3.js`), 4 = the history of threads (`art.js`).
+  (`art-v2.js`, `art-v3.js`), 4 = the history of threads (`art-v4.js`),
+  5 = the history woven live, in ribbons with colour washes (`art.js`).
 
 Runs in the not-alone container as user `sepandidx` (`deploy/sepand-index.service`,
 port 8001), database `sepandidx`, behind Caddy (`deploy/Caddyfile.snippet`).

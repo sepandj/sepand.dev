@@ -1,10 +1,11 @@
-// sepand.dev, engine 4: the history, one thread per visit.
+// sepand.dev, engine 5: the history, woven while you watch.
 //
-// Every visit that has ever happened is a thread. Each one starts where its
-// own hash says, follows the currents of the era (epoch) it was born in, and
-// bends around the doors. Eras differ in their currents, colours and stroke,
-// so a rare visit that opens a new era changes everything drawn after it.
-// The page draws the whole history oldest first, then yours, brighter, last.
+// Every visit that has ever happened is a ribbon of a few strands. Each one
+// starts where its own hash says, follows the currents of the era (epoch) it
+// was born in, curls around the doors, and leaves a wash of colour behind.
+// Eras differ in their currents, colours and stroke, so a rare visit that
+// opens a new era changes everything drawn after it. The page replays the
+// whole history, oldest first, then draws yours, slowly and brightest, last.
 
 export const LOOP = 90; // seconds
 export const MAX_SITES = 8;
@@ -36,6 +37,7 @@ function rng(seed) {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
 // ---- the history ---------------------------------------------------------------
 
@@ -48,12 +50,12 @@ export async function prepare(state) {
 
 // ---- eras ---------------------------------------------------------------------
 
-const STYLES = ["solid", "beads", "dashes", "double", "solid", "beads"];
+const STYLES = ["solid", "beads", "dashes", "double", "solid", "solid"];
 
 function era(seedHex, sitesHex, dark) {
   const S0 = hexBytes(seedHex), D = hexBytes(sitesHex || "00".repeat(32));
   // The doors' fingerprint folds into the currents (not the colours), so a new
-  // door bends every thread drawn after it.
+  // door bends every strand drawn after it.
   const S = S0.map((x, i) => (i < 8 ? x : x ^ D[i]));
   const u = i => S[i % 32] / 255;
   const R = rng((S[8] << 24 | S[9] << 16 | S[10] << 8 | S[11]) >>> 0);
@@ -63,16 +65,16 @@ function era(seedHex, sitesHex, dark) {
     const f = 0.6 + R() * 2.6, a = R() * TAU;
     terms.push({ fx: f * Math.cos(a), fy: f * Math.sin(a), ph: R() * TAU, amp: (0.5 + R()) / (1 + i * 0.5) });
   }
-  // Palette: 5 colours around the era's hue, muted but alive.
+  // Palette: five colours around the era's hue.
   const hue = u(13), scheme = S[14] % 4;
-  const offs = [[0, .06, .12, -.06, -.12], [0, .33, .67, .05, .38], [0, .5, .03, .53, .25], [0, .42, .58, .08, .5]][scheme];
-  const sat = 0.32 + u(15) * 0.28;
-  const pal = offs.map((o, i) => hsl(hue + o, sat * (i % 2 ? 0.8 : 1), dark ? 0.66 + 0.06 * (i % 3) : 0.42 + 0.05 * (i % 3)));
+  const offs = [[0, .07, .14, -.07, -.14], [0, .33, .67, .05, .38], [0, .5, .04, .54, .25], [0, .42, .58, .09, .5]][scheme];
+  const sat = 0.45 + u(15) * 0.3;
+  const pal = offs.map((o, i) => hsl(hue + o, sat * (i % 2 ? 0.85 : 1), dark ? 0.6 + 0.06 * (i % 3) : 0.44 + 0.06 * (i % 3)));
   return {
     kind: S[0] % 5, terms, pal, style: STYLES[S[1] % STYLES.length],
     c: [(u(16) - 0.5) * 1.2, (u(17) - 0.5) * 1.2], rot: (u(18) - 0.5) * 2.4, spin: u(19) < 0.5 ? -1 : 1,
     drift: [Math.cos(u(20) * TAU), Math.sin(u(20) * TAU)], cell: [1.2 + u(21) * 2.4, 1.2 + u(22) * 2.4],
-    step: 0.006 + u(23) * 0.004, len: 0.6 + u(24) * 0.9,
+    step: 0.006 + u(23) * 0.004, len: 0.7 + u(24) * 0.8, spread: 0.03 + u(25) * 0.09,
   };
 }
 
@@ -134,26 +136,38 @@ export function placeDoors(state, sites, W, H) {
   return out;
 }
 
-// ---- drawing ---------------------------------------------------------------------
+// ---- the plan: every strand to draw, in order --------------------------------------
 
-// Everything needed to draw the history at a given size (W, H in device px).
+const STRAND_BUDGET = 9000;
+
+// W, H in device px; cssPx = device px per css px.
 function plan(state, genes, doors, W, H, cssPx) {
   const ch = state.chain, n = ch.n, half = Math.min(W, H) / 2;
   const wDoors = doors.map(d => ({ ...d, wx: (d.x * cssPx - W / 2) / half, wy: (H / 2 - d.y * cssPx) / half, wr: d.rPx * cssPx / half }));
   const eras = {};
   const getEra = e => (eras[e] ??= era(ch.seeds[e] || state.epoch_seed, state.sites_digest, genes.dark));
-  // Very long histories: keep every recent thread, thin out the oldest.
-  const KEEP = 5000, idx = [];
-  if (n <= KEEP) for (let i = 0; i < n; i++) idx.push(i);
+  // Which visits to draw (all, until the history is very long) and how many
+  // strands each ribbon gets (fewer, the longer the history).
+  const KEEP = 4000, idx = [];
+  if (n <= KEEP) for (let i = 0; i < n - 1; i++) idx.push(i);
   else {
     const stride = Math.ceil((n - KEEP / 2) / (KEEP / 2));
     for (let i = 0; i < n - KEEP / 2; i += stride) idx.push(i);
-    for (let i = n - KEEP / 2; i < n; i++) idx.push(i);
+    for (let i = n - KEEP / 2; i < n - 1; i++) idx.push(i);
   }
-  return { n, W, H, half, cssPx, wDoors, getEra, idx, ax: W / 2 / half, ay: H / 2 / half, chain: ch };
+  const perVisit = clamp(Math.floor(STRAND_BUDGET / Math.max(1, idx.length)), 1, 6);
+  const strands = [];
+  idx.forEach((i, r) => {
+    const b = ch.h.subarray(i * 8, i * 8 + 8);
+    const m = Math.min(perVisit, 2 + (b[4] % 5));
+    for (let s = 0; s < m; s++) strands.push({ i, s, r });
+  });
+  const crowd = clamp(Math.sqrt(900 / Math.max(1, idx.length * perVisit / 3)), 0.3, 1);
+  return { n, W, H, half, cssPx, wDoors, getEra, idx, strands, crowd,
+           ax: W / 2 / half, ay: H / 2 / half, chain: ch, visits: idx.length };
 }
 
-// Follow the current from (x, y) for up to `steps`, as screen points.
+// Follow the current from (x, y) for up to `steps`, as flat screen points.
 function trace(P, E, x, y, steps, dir, wob) {
   const pts = [];
   for (let s = 0; s < steps; s++) {
@@ -168,69 +182,92 @@ function trace(P, E, x, y, steps, dir, wob) {
   return pts;
 }
 
-// One thread as a flat list of screen points. Yours starts on screen and runs
-// both ways from there, so it is always long and in view.
-function thread(P, i, mine = false) {
+// One strand of a visit's ribbon, with how it should look.
+function strand(P, { i, s }) {
   const { h, e } = P.chain;
   const b = h.subarray(i * 8, i * 8 + 8);
   const E = P.getEra((e[i * 2] << 8) | e[i * 2 + 1]);
+  const R = rng(((b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3]) ^ (s * 0x9e3779b9)) >>> 0);
   const fx = (b[0] << 8 | b[1]) / 65535 * 2 - 1, fy = (b[2] << 8 | b[3]) / 65535 * 2 - 1;
-  const wob = (b[6] / 255 - 0.5) * 0.6;
-  if (mine) {
-    // Several starts, all from your own hash; the longest path is yours.
-    const R = rng((b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3]) >>> 0);
-    let best = null;
-    for (let t = 0; t < 8; t++) {
-      const x = (t ? R() * 2 - 1 : fx) * (P.ax - 0.25), y = (t ? R() * 2 - 1 : fy) * (P.ay - 0.35);
-      const back = trace(P, E, x, y, 420, -1, wob), fwd = trace(P, E, x, y, 420, 1, wob);
-      const pts = [];
-      for (let k = back.length - 2; k >= 2; k -= 2) pts.push(back[k], back[k + 1]);
-      const all = pts.concat(fwd);
-      if (!best || all.length > best.length) best = all;
-      if (best.length > 900) break;
-    }
-    return { pts: best, E, b };
-  }
-  const steps = Math.round((120 + b[4] / 255 * 380) * E.len);
-  return { pts: trace(P, E, fx * (P.ax + 0.1), fy * (P.ay + 0.1), steps, b[5] & 1 ? 1 : -1, wob), E, b };
+  const x = fx * (P.ax + 0.1) + (s ? (R() - 0.5) * E.spread * 2 : 0);
+  const y = fy * (P.ay + 0.1) + (s ? (R() - 0.5) * E.spread * 2 : 0);
+  const steps = Math.round((140 + b[4] / 255 * 360) * E.len * (s ? 0.7 + R() * 0.5 : 1));
+  const wob = (b[6] / 255 - 0.5) * 0.6 + s * 0.04;
+  const pts = trace(P, E, x, y, steps, b[5] & 1 ? 1 : -1, wob);
+  const age = P.n > 2 ? i / (P.n - 2) : 1;                 // 0 oldest .. 1 newest
+  const col = E.pal[(b[7] + s) % E.pal.length];
+  const w = (0.6 + 0.9 * age) * (s ? 0.6 + R() * 0.6 : 1.3) * P.cssPx;
+  const a = (0.42 + 0.5 * Math.pow(age, 0.8)) * P.crowd;
+  return { pts, E, b, col, w, a, style: E.style, wash: s === 0, washW: (14 + (b[3] % 32)) * P.cssPx };
 }
 
-function stroke(g, T, color, width, alpha, cssPx) {
-  const p = T.pts;
-  if (p.length < 4) return;
-  g.strokeStyle = css(color, alpha); g.fillStyle = css(color, alpha); g.lineWidth = width;
+// Yours: several starts from your own hash, the longest path, traced both ways.
+function mineStrand(P) {
+  const i = P.n - 1, { h, e } = P.chain;
+  const b = h.subarray(i * 8, i * 8 + 8);
+  const E = P.getEra((e[i * 2] << 8) | e[i * 2 + 1]);
+  const R = rng((b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3]) >>> 0);
+  const fx = (b[0] << 8 | b[1]) / 65535 * 2 - 1, fy = (b[2] << 8 | b[3]) / 65535 * 2 - 1;
+  const wob = (b[6] / 255 - 0.5) * 0.6;
+  let best = null;
+  for (let t = 0; t < 8; t++) {
+    const x = (t ? R() * 2 - 1 : fx) * (P.ax - 0.25), y = (t ? R() * 2 - 1 : fy) * (P.ay - 0.35);
+    const back = trace(P, E, x, y, 420, -1, wob), fwd = trace(P, E, x, y, 420, 1, wob);
+    const pts = [];
+    for (let k = back.length - 2; k >= 2; k -= 2) pts.push(back[k], back[k + 1]);
+    const all = pts.concat(fwd);
+    if (!best || all.length > best.length) best = all;
+    if (best.length > 900) break;
+  }
+  const col = E.pal[b[7] % E.pal.length];
+  return { pts: best, E, b, col, w: (2.6 + Math.min(1.6, Math.log10(P.n + 1) * 0.5)) * P.cssPx, a: 1,
+           style: "solid", wash: true, washW: 36 * P.cssPx };
+}
+
+// ---- strokes ---------------------------------------------------------------------
+
+// Draw points [from, to) of a strand (indices count points, not floats).
+function drawRange(g, T, from, to, cssPx) {
+  const p = T.pts, n = p.length / 2;
+  to = Math.min(to, n);
+  if (to - from < 1 || n < 2) return;
+  g.strokeStyle = css(T.col, T.a); g.fillStyle = css(T.col, T.a);
   g.lineCap = "round"; g.lineJoin = "round";
-  const style = T.E.style;
-  if (style === "beads") {
-    for (let k = 0; k < p.length; k += 8) { g.beginPath(); g.arc(p[k], p[k + 1], width * 0.85, 0, TAU); g.fill(); }
+  if (T.style === "beads") {
+    for (let k = Math.ceil(from / 4) * 4; k < to; k += 4) { g.beginPath(); g.arc(p[2 * k], p[2 * k + 1], T.w * 0.8, 0, TAU); g.fill(); }
     return;
   }
-  g.setLineDash(style === "dashes" ? [6 * cssPx, 5 * cssPx] : []);
+  const a = Math.max(0, from - 1);
   const path = off => {
     g.beginPath();
-    for (let k = 0; k < p.length; k += 2) {
-      let X = p[k], Y = p[k + 1];
+    for (let k = a; k < to; k++) {
+      let X = p[2 * k], Y = p[2 * k + 1];
       if (off) {
-        const j = Math.min(k + 2, p.length - 2), i0 = Math.max(k - 2, 0);
-        const tx = p[j] - p[i0], ty = p[j + 1] - p[i0 + 1], l = Math.hypot(tx, ty) || 1;
+        const j = Math.min(k + 1, n - 1), i0 = Math.max(k - 1, 0);
+        const tx = p[2 * j] - p[2 * i0], ty = p[2 * j + 1] - p[2 * i0 + 1], l = Math.hypot(tx, ty) || 1;
         X += -ty / l * off; Y += tx / l * off;
       }
-      k ? g.lineTo(X, Y) : g.moveTo(X, Y);
+      k === a ? g.moveTo(X, Y) : g.lineTo(X, Y);
     }
     g.stroke();
   };
-  if (style === "double") { g.lineWidth = width * 0.6; path(1.6 * cssPx); path(-1.6 * cssPx); }
-  else path(0);
+  if (T.style === "dashes") {
+    if (!T.cum) { T.cum = new Float32Array(n); for (let k = 1; k < n; k++) T.cum[k] = T.cum[k - 1] + Math.hypot(p[2 * k] - p[2 * k - 2], p[2 * k + 1] - p[2 * k - 1]); }
+    g.setLineDash([7 * cssPx, 5 * cssPx]); g.lineDashOffset = T.cum[a];
+  }
+  if (T.style === "double") { g.lineWidth = T.w * 0.6; path(1.7 * cssPx); path(-1.7 * cssPx); }
+  else { g.lineWidth = T.w; path(0); }
   g.setLineDash([]);
 }
 
-function threadStyle(P, T, i, mine) {
-  const age = P.n > 1 ? i / (P.n - 1) : 1;            // 0 oldest .. 1 newest
-  const col = T.E.pal[T.b[7] % T.E.pal.length];
-  if (mine) return { col, w: (2.4 + Math.min(1.6, Math.log10(P.n + 1) * 0.5)) * P.cssPx, a: 1 };
-  // Older threads recede; in a crowded history every thread gets quieter.
-  const crowd = Math.max(0.35, Math.min(1, Math.sqrt(800 / P.n)));
-  return { col, w: (0.7 + 0.8 * age) * P.cssPx, a: (0.3 + 0.55 * Math.pow(age, 0.8)) * crowd };
+// The soft colour a ribbon leaves behind.
+function drawWash(g, T, alpha) {
+  const p = T.pts;
+  if (p.length < 8) return;
+  g.strokeStyle = css(T.col, alpha); g.lineWidth = T.washW; g.lineCap = "round"; g.lineJoin = "round";
+  g.beginPath();
+  for (let k = 0; k < p.length; k += 6) k ? g.lineTo(p[k], p[k + 1]) : g.moveTo(p[k], p[k + 1]);
+  g.stroke();
 }
 
 // Door outlines: closed wavy lines that gain lobes and rings as the history grows.
@@ -240,9 +277,10 @@ function drawDoors(g, P, genes, state) {
   const rings = 1 + Math.min(3, Math.floor(lg / 3));
   for (const d of P.wDoors) {
     const cx = d.x * P.cssPx, cy = d.y * P.cssPx, R = d.rPx * P.cssPx;
-    const col = hsl(d.hue, genes.dark ? 0.35 : 0.4, genes.dark ? 0.7 : 0.38);
-    g.fillStyle = css(genes.bg, 0.92);
+    const col = hsl(d.hue, genes.dark ? 0.45 : 0.5, genes.dark ? 0.66 : 0.4);
+    g.fillStyle = css(genes.bg, 0.94);
     g.beginPath(); g.arc(cx, cy, R * 0.97, 0, TAU); g.fill();
+    g.fillStyle = css(col, 0.07); g.fill();
     for (let r = 0; r < rings; r++) {
       g.beginPath();
       for (let s = 0; s <= 240; s++) {
@@ -253,59 +291,115 @@ function drawDoors(g, P, genes, state) {
         const X = cx + Math.cos(th) * rr, Y = cy + Math.sin(th) * rr;
         s ? g.lineTo(X, Y) : g.moveTo(X, Y);
       }
-      g.strokeStyle = css(col, r ? 0.45 / r : 0.95); g.lineWidth = (r ? 0.7 : 1.3) * P.cssPx; g.stroke();
+      g.strokeStyle = css(col, r ? 0.5 / r : 0.95); g.lineWidth = (r ? 0.8 : 1.4) * P.cssPx; g.stroke();
     }
   }
 }
 
-function drawMine(g, P, T, k, glow, bg) {
-  const st = threadStyle(P, T, P.n - 1, true);
-  const n = Math.max(4, Math.floor(T.pts.length * k / 2) * 2);
-  const part = { ...T, pts: T.pts.slice(0, n) };
-  // A channel of bare ground under it, so it cuts clear of a dense weave.
-  stroke(g, { ...part, E: { ...part.E, style: "solid" } }, bg, st.w + 5 * P.cssPx, 0.85, P.cssPx);
-  g.shadowColor = css(st.col, 0.6); g.shadowBlur = glow * P.cssPx;
-  stroke(g, part, st.col, st.w, st.a, P.cssPx);
+// Washes are painted at a fraction of the resolution and scaled back up, which
+// softens their edges like wet colour on paper.
+const WS = 6;
+function washCanvas(w, h) {
+  const c = document.createElement("canvas"); c.width = Math.ceil(w / WS); c.height = Math.ceil(h / WS);
+  const g = c.getContext("2d"); g.setTransform(1 / WS, 0, 0, 1 / WS, 0, 0); return c;
+}
+function drawSoft(g, wash, w, h) { g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high"; g.drawImage(wash, 0, 0, w, h); }
+
+function washAlpha(genes, P) { return (genes.dark ? 0.1 : 0.085) * Math.max(0.45, P.crowd); }
+
+function drawMine(g, T, upto, cssPx, bg, glow) {
+  const n = T.pts.length / 2, k = Math.max(2, Math.floor(upto));
+  // A channel of bare ground under it, so it cuts clear of the weave.
+  drawRange(g, { ...T, col: bg, a: 0.85, w: T.w + 5 * cssPx }, 0, k, cssPx);
+  g.shadowColor = css(T.col, 0.7); g.shadowBlur = glow * cssPx;
+  drawRange(g, T, 0, k, cssPx);
   g.shadowBlur = 0;
-  if (part.pts.length > 1) { g.fillStyle = css(st.col); g.beginPath(); g.arc(part.pts[0], part.pts[1], 3.2 * P.cssPx, 0, TAU); g.fill(); }
+  if (n) { g.fillStyle = css(T.col); g.beginPath(); g.arc(T.pts[0], T.pts[1], 3.4 * cssPx, 0, TAU); g.fill(); }
 }
 
-export function createArt(canvas) {
+// ---- live: the weave, drawn while you watch ---------------------------------------------
+
+export function createArt(canvas, opts = {}) {
   const g = canvas.getContext("2d");
   if (!g) return null;
-  let genes, doors, P, hist, doorLayer, cursor = 0, built = false, myStart = 0, myT = null;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let genes, doors, P, wash, lines, doorLayer, mineLayer, sched, next, active, t0, total, mine, mineDone, onVisit;
   const off = () => { const c = document.createElement("canvas"); c.width = canvas.width; c.height = canvas.height; return c; };
+
   function rebuild() {
-    P = plan(genes.state, genes, doors, canvas.width, canvas.height, canvas.width / innerWidth);
-    hist = off(); doorLayer = off();
+    P = plan(genes.state, genes, doors, canvas.width, canvas.height, canvas.width / (canvas.clientWidth || innerWidth));
+    wash = washCanvas(canvas.width, canvas.height); lines = off(); doorLayer = off(); mineLayer = off();
     drawDoors(doorLayer.getContext("2d"), P, genes, genes.state);
-    cursor = 0; built = P.idx.length <= 1; myStart = 0;
-    myT = thread(P, P.n - 1, true);
+    // The replay takes longer the longer the history is.
+    total = reduce ? 0 : clamp(4 + 2 * Math.log2(P.visits + 1), 6, 18) * 1000;
+    const V = Math.max(1, P.visits - 1);
+    sched = P.strands.map(st => ({ ...st, at: total * 0.9 * Math.pow(st.r / V, 0.85) + st.s * 90 }));
+    next = 0; active = []; t0 = performance.now(); mine = null; mineDone = false;
   }
-  function grow(budgetMs) {
-    const t0 = performance.now(), hg = hist.getContext("2d");
-    while (cursor < P.idx.length - 1 && performance.now() - t0 < budgetMs) {   // everyone before you
-      const i = P.idx[cursor++];
-      const th = thread(P, i), st = threadStyle(P, th, i, false);
-      stroke(hg, th, st.col, st.w, st.a, P.cssPx);
+
+  function advance(now) {
+    const el = now - t0, lg = lines.getContext("2d"), wg = wash.getContext("2d");
+    const budget = performance.now() + 14;
+    while (next < sched.length && sched[next].at <= el && performance.now() < budget) {
+      const T = strand(P, sched[next]);
+      T.start = sched[next].at; T.drawn = 0; T.n = T.pts.length / 2;
+      T.dur = reduce ? 0 : 500 + T.n * 3.2;
+      if (T.wash && onVisit) onVisit(sched[next].i + 1);
+      active.push(T); next++;
     }
-    if (cursor >= P.idx.length - 1) built = true;
+    const keep = [];
+    for (const T of active) {
+      const k = T.dur ? Math.floor(T.n * clamp((el - T.start) / T.dur, 0, 1)) : T.n;
+      if (k > T.drawn) { drawRange(lg, T, T.drawn, k, P.cssPx); T.drawn = k; }
+      if (T.drawn >= T.n) { if (T.wash) drawWash(wg, T, washAlpha(genes, P)); }
+      else keep.push(T);
+    }
+    active = keep;
+    if (next >= sched.length && !active.length && !mine) {
+      mine = mineStrand(P); mine.start = el; mine.n = mine.pts.length / 2;
+      if (onVisit) onVisit(P.n);
+    }
   }
+
   return {
-    set(gn, d = []) { genes = gn; doors = d; rebuild(); },
-    draw(theta) {
-      if (!built) grow(10);
+    set(gn, d = [], cb) { genes = gn; doors = d; if (cb) onVisit = cb; rebuild(); },
+    onVisit(cb) { onVisit = cb; },
+    draw(theta, _px, now = performance.now()) {
+      if (!mineDone) advance(now);
       g.setTransform(1, 0, 0, 1, 0, 0);
       g.fillStyle = css(genes.bg); g.fillRect(0, 0, canvas.width, canvas.height);
       // Breathing: the whole weave sways a hair around the centre.
       const s = 1 + 0.004 * Math.sin(theta), a = 0.002 * Math.sin(theta + 1.3);
       g.translate(canvas.width / 2, canvas.height / 2); g.rotate(a); g.scale(s, s); g.translate(-canvas.width / 2, -canvas.height / 2);
-      g.drawImage(hist, 0, 0);
+      drawSoft(g, wash, canvas.width, canvas.height);
+      g.drawImage(lines, 0, 0);
+      // Glowing tips on the strands still growing.
+      for (const T of active) {
+        const k = Math.max(0, T.drawn - 1);
+        if (T.n < 2) continue;
+        g.fillStyle = css(T.col, 0.95); g.beginPath(); g.arc(T.pts[2 * k], T.pts[2 * k + 1], T.w * 1.3 + 0.8 * P.cssPx, 0, TAU); g.fill();
+      }
       g.drawImage(doorLayer, 0, 0);
-      if (built) {                                  // yours draws itself in, then glows softly
-        if (!myStart) myStart = performance.now();
-        const k = Math.min(1, (performance.now() - myStart) / 1800);
-        drawMine(g, P, myT, k, 5 + 2 * Math.sin(theta * 3), genes.bg);
+      if (mine) {
+        const el = now - t0;
+        if (!mineDone) {
+          const k = reduce ? mine.n : mine.n * clamp((el - mine.start) / 3600, 0, 1);
+          const mg = mineLayer.getContext("2d");
+          mg.clearRect(0, 0, mineLayer.width, mineLayer.height);
+          if (k >= mine.n) { drawWash(wash.getContext("2d"), mine, washAlpha(genes, P) * 1.6); mineDone = true; }
+          drawMine(mg, mine, k, P.cssPx, genes.bg, 7);
+          if (!mineDone && k > 1) {            // the travelling light at its tip
+            const j = Math.floor(k) - 1;
+            g.drawImage(mineLayer, 0, 0);
+            g.fillStyle = css([1, 1, 1], genes.dark ? 0.9 : 0.75);
+            g.beginPath(); g.arc(mine.pts[2 * j], mine.pts[2 * j + 1], 2.4 * P.cssPx, 0, TAU); g.fill();
+            g.setTransform(1, 0, 0, 1, 0, 0);
+            return;
+          }
+        }
+        g.globalAlpha = 0.86 + 0.14 * Math.sin(theta * 4);
+        g.drawImage(mineLayer, 0, 0);
+        g.globalAlpha = 1;
       }
       g.setTransform(1, 0, 0, 1, 0, 0);
     },
@@ -316,19 +410,28 @@ export function createArt(canvas) {
 
 export const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace';
 
-export function renderCard(state, genes, theta, w, h) {
-  const scale = Math.min(w, h) / 420;
+// The finished weave, drawn all at once. Pass `cssScale` (device px per css
+// px of the screen it should match) to get exactly what that screen shows.
+export function renderCard(state, genes, theta, w, h, cssScale) {
+  const scale = cssScale || Math.min(w, h) / 420;
   const doors = placeDoors(state, state.sites || [], w / scale, h / scale);
   const c = document.createElement("canvas"); c.width = w; c.height = h;
   const g = c.getContext("2d");
   const P = plan(state, genes, doors, w, h, scale);
   g.fillStyle = css(genes.bg); g.fillRect(0, 0, w, h);
-  for (let k = 0; k < P.idx.length - 1; k++) {
-    const i = P.idx[k], th = thread(P, i), st = threadStyle(P, th, i, false);
-    stroke(g, th, st.col, st.w, st.a, scale);
+  const wash = washCanvas(w, h);
+  const wg = wash.getContext("2d"), lines = document.createElement("canvas"); lines.width = w; lines.height = h;
+  const lg = lines.getContext("2d");
+  for (const st of P.strands) {
+    const T = strand(P, st);
+    drawRange(lg, T, 0, T.pts.length / 2, scale);
+    if (T.wash) drawWash(wg, T, washAlpha(genes, P));
   }
+  const my = mineStrand(P);
+  drawWash(wg, my, washAlpha(genes, P) * 1.6);
+  drawSoft(g, wash, w, h); g.drawImage(lines, 0, 0);
   drawDoors(g, P, genes, state);
-  drawMine(g, P, thread(P, P.n - 1, true), 1, 6, genes.bg);
+  drawMine(g, my, my.pts.length / 2, scale, genes.bg, 7);
 
   g.textAlign = "center"; g.textBaseline = "middle"; g.fillStyle = css(genes.ink);
   g.font = `${Math.round(12 * scale)}px ${MONO}`;

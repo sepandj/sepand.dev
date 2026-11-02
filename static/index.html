@@ -17,7 +17,9 @@
   [hidden]{display:none !important}
   html,body{margin:0; height:100%; background:var(--ground); color:var(--ink); overflow:hidden; transition:background-color .6s ease;
     font-family:var(--mono); -webkit-font-smoothing:antialiased; -webkit-tap-highlight-color:transparent}
-  canvas#art{position:fixed; inset:0; width:100vw; height:100vh; height:100dvh; display:block; background:var(--ground)}
+  /* Sized to the largest viewport, so a phone's address bar sliding in and
+     out never resizes (and so never restarts) the drawing. */
+  canvas#art{position:fixed; left:0; top:0; width:100vw; height:100vh; height:100lvh; display:block; background:var(--ground)}
 
   /* Doors live inside the drawing: each is the quiet room the lines curl
      around. The link is the whole room. */
@@ -129,7 +131,7 @@ catch (e) {
   state = { n: 1, hash: hx, epoch_seed: hx, when: "", sites: [], engine: 3 };
 }
 // Each visit is drawn by the engine it was made with, forever.
-const E = await import({ 1: "/static/art-v1.js", 2: "/static/art-v2.js", 3: "/static/art-v3.js" }[state.engine] || "/static/art.js");
+const E = await import({ 1: "/static/art-v1.js", 2: "/static/art-v2.js", 3: "/static/art-v3.js", 4: "/static/art-v4.js" }[state.engine] || "/static/art.js");
 if (E.prepare) await E.prepare(state);   // engine 4 draws the whole history
 const { LOOP, genome, createArt, renderCard, fmtHash } = E;
 const css = E.css || ((c, a = 1) => `rgba(${c.map(x => Math.round(x * 255)).join(",")},${a})`);
@@ -155,6 +157,7 @@ if (mode === "render") {
 
 function start() {
   const canvas = $("#art");
+  const cw = () => canvas.clientWidth || innerWidth, ch = () => canvas.clientHeight || innerHeight;
   let art = null;
   try { art = createArt(canvas); } catch (e) { art = null; }
 
@@ -171,7 +174,7 @@ function start() {
   const nav = $("#doors");
   let doors = [];
   function layout() {
-    doors = placeDoors(state, state.sites || [], innerWidth, innerHeight);
+    doors = placeDoors(state, state.sites || [], cw(), ch());
     nav.replaceChildren(...doors.map(d => {
       const a = document.createElement("a");
       a.className = "door"; a.href = d.url;
@@ -180,20 +183,27 @@ function start() {
       const s = document.createElement("span"); s.textContent = d.name; a.appendChild(s);
       return a;
     }));
-    if (art) art.set(genes, doors);
+    if (art) art.set(genes, doors, n => { if (no) no.textContent = `no. ${n.toLocaleString("en-US")}`; });
   }
 
   // Resolution adapts to the device so the motion stays fluid. It is only
   // tuned while the page fades in, then it stays put (a resize clears the
   // canvas, which is what made the start flicker).
   const dprMax = Math.min(devicePixelRatio || 1, 2);
+  const no = $("#mark b");
   let scale = E.fixedScale ? 1 : innerWidth < 700 ? 0.6 : 0.8, frames = 0, acc = 0, last = performance.now(), tunes = 0, settled = !!E.fixedScale;
   function size() {
     if (!art) return;
-    const w = Math.max(2, Math.round(innerWidth * dprMax * scale)), h = Math.max(2, Math.round(innerHeight * dprMax * scale));
+    const w = Math.max(2, Math.round(cw() * dprMax * scale)), h = Math.max(2, Math.round(ch() * dprMax * scale));
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   }
-  addEventListener("resize", () => { size(); layout(); if (art && running) art.draw(theta(performance.now()), canvas.width / innerWidth); });
+  // Only a real change of size redraws (rotating, resizing a window).
+  let lastW = cw(), lastH = ch();
+  addEventListener("resize", () => {
+    if (cw() === lastW && Math.abs(ch() - lastH) < 2) return;
+    lastW = cw(); lastH = ch();
+    size(); layout(); if (art && running) art.draw(theta(performance.now()), canvas.width / cw());
+  });
   size(); layout();
 
   // Reduced motion: the same loop, four times slower.
@@ -219,7 +229,7 @@ function start() {
         if (++tunes >= 3 || scale === before) settled = true;
       }
     }
-    art.draw(theta(now), canvas.width / innerWidth);
+    art.draw(theta(now), canvas.width / cw());
     if (!shown) { shown = true; requestAnimationFrame(() => document.body.classList.add("ready")); }
     requestAnimationFrame(tick);
   }
@@ -240,8 +250,15 @@ function start() {
   let blob = null;
   function card() {
     if (blob) return Promise.resolve(blob);
-    const [w, h] = innerHeight >= innerWidth ? [1080, 1350] : [1600, 1000];
-    const c = renderCard(state, genes, theta(performance.now()), w, h);
+    let c;
+    if (E.prepare && E.fixedScale && state.engine !== 4) {
+      // Exactly what this screen shows, at print resolution.
+      const k = Math.max(2, Math.min(3, 3000 / Math.max(cw(), ch())));
+      c = renderCard(state, genes, theta(performance.now()), Math.round(cw() * k), Math.round(ch() * k), k);
+    } else {
+      const [w, h] = innerHeight >= innerWidth ? [1080, 1350] : [1600, 1000];
+      c = renderCard(state, genes, theta(performance.now()), w, h);
+    }
     return new Promise(res => c.toBlob(b => { blob = b; res(b); }, "image/png"));
   }
   const name = `sepand-dev-${state.n}.png`;
