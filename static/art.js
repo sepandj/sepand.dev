@@ -1,4 +1,4 @@
-// sepand.dev, engine 8: the history, poured as oil.
+// sepand.dev, engine 10: the history, poured as oil.
 //
 // Every visit that has ever happened is a thin stream of coloured oil, poured
 // along a path its hash chooses. A fluid simulation carries it: heavy, damped,
@@ -7,15 +7,18 @@
 // detail sits in the range people find most restful, and every edge is a curve.
 // Oil is drawn as oil: clear where thin, deep and rich where thick, bending the
 // grain beneath it, with a sharp meniscus at its edge, a rainbow film where it
-// thins out, and glints of light. The names of the other sites are set into the
-// surface and the oil flows around their letters.
+// thins out, and glints of light. Each of the other sites is a thick, clear drop
+// of the same oil, set down where the visit says before the pouring starts; the
+// currents carry and stretch it like everything else, only a little less, and
+// it comes to rest where the flow leaves it. It carries the site's name.
 // The whole history is replayed oldest first; yours pours last and shimmers.
 // Then the oil rests, and only the light moves, on a loop.
 
 export const LOOP = 60; // seconds for the light to come back around
 export const MAX_SITES = 8;
 export const fixedScale = true;
-export const namesInArt = true;
+export const namesInArt = false;
+export const movingDoors = true;
 
 const TAU = Math.PI * 2;
 
@@ -57,8 +60,9 @@ export async function prepare(state) {
 
 // ---- colour ---------------------------------------------------------------------
 
-// Every colour is equally likely: three bytes of the visit's own hash, taken
-// straight as red, green and blue. About one stream in 64 is a metal instead.
+// Every hue is equally likely: 16 bits of the visit's own hash pick a point on
+// the colour wheel, two more bytes its strength and lightness, kept clear of
+// grey so each colour reads as itself. About one stream in 64 is a metal.
 const METALS = [
   [1.0, 0.78, 0.34],   // gold
   [0.95, 0.55, 0.38],  // copper
@@ -69,7 +73,8 @@ const METALS = [
 ];
 function colourOf(X) {
   if (X[3] < 4) return { c: METALS[X[4] % METALS.length], metal: true };
-  return { c: [X[0] / 255, X[1] / 255, X[2] / 255], metal: false };
+  const hue = (X[0] << 8 | X[1]) / 65536, sat = 0.6 + X[2] / 255 * 0.4, light = 0.4 + X[5] / 255 * 0.25;
+  return { c: hsl(hue, sat, light), metal: false };
 }
 
 // ---- eras ---------------------------------------------------------------------
@@ -113,22 +118,18 @@ function textWidth(text, px) {
   return measurer.measureText(text).width + text.length * px * 0.18;     // letter spacing
 }
 export function placeDoors(state, sites, W, H) {
-  const m = Math.min(W, H), out = [];
+  const out = [];
   for (const [i, s] of sites.slice(0, MAX_SITES).entries()) {
     const R = rng(fnv(state.hash + "|" + s.name));
-    const px = Math.round(clamp(m * (0.06 + R() * 0.05), 24, 64));
-    const angle = (R() - 0.5) * 0.5;
-    const w = textWidth(s.name, px), h = px * 1.2;
-    const half = Math.abs(Math.cos(angle)) * w / 2 + Math.abs(Math.sin(angle)) * h / 2 + 16;
-    const halfY = Math.abs(Math.sin(angle)) * w / 2 + Math.abs(Math.cos(angle)) * h / 2 + 16;
+    const rPx = clamp(textWidth(s.name, 14) / 2 + 22, 46, 110);
     let best = null;
     for (let t = 0; t < 40; t++) {
-      const x = half + R() * Math.max(1, W - 2 * half), y = 80 + halfY + R() * Math.max(1, H - 200 - 2 * halfY);
-      const gap = out.length ? Math.min(...out.map(o => Math.hypot(o.x - x, o.y - y) - o.w / 2 - w / 2)) : Infinity;
+      const x = rPx + 20 + R() * Math.max(1, W - 2 * rPx - 40), y = rPx + 90 + R() * Math.max(1, H - 2 * rPx - 220);
+      const gap = out.length ? Math.min(...out.map(o => Math.hypot(o.x - x, o.y - y) - o.rPx - rPx)) : Infinity;
       if (!best || gap > best.gap) best = { x, y, gap };
-      if (gap > 40) break;
+      if (gap > 30) break;
     }
-    out.push({ ...s, i, x: best.x, y: best.y, px, angle, w, h });
+    out.push({ ...s, i, x: best.x, y: best.y, rPx });
   }
   return out;
 }
@@ -165,8 +166,10 @@ void main(){ vUv = a * 0.5 + 0.5; gl_Position = vec4(a, 0.0, 1.0); }`;
 const HEAD = `#version 300 es
 precision highp float; precision highp sampler2D;
 in vec2 vUv; out vec4 o;
-uniform sampler2D uMask;
+uniform sampler2D uMask, uMarks;
 bool inName(vec2 p){ return texture(uMask, p).r > 0.5; }
+// Yours (r) and the sites' pours (b) are thick and keep to themselves.
+float locked(vec2 p){ vec4 m = texture(uMarks, p); return smoothstep(0.3, 0.6, max(m.r, m.b)); }
 `;
 
 const ADVECT = HEAD + `
@@ -207,6 +210,7 @@ void main(){
   vec2 nb = (texture(uVel, vUv + vec2(uTexel.x, 0)).xy + texture(uVel, vUv - vec2(uTexel.x, 0)).xy
            + texture(uVel, vUv + vec2(0, uTexel.y)).xy + texture(uVel, vUv - vec2(0, uTexel.y)).xy) * 0.25;
   v = mix(v, nb, 0.55) * uDamp;
+  v *= 1.0 - 0.85 * locked(vUv);                  // the thick pours barely move
   // Gravity: oil runs from where it is deep to where it is shallow.
   float aL = texture(uDye, vUv - vec2(uTexel.x, 0)).a, aR = texture(uDye, vUv + vec2(uTexel.x, 0)).a;
   float aB = texture(uDye, vUv - vec2(0, uTexel.y)).a, aT = texture(uDye, vUv + vec2(0, uTexel.y)).a;
@@ -231,20 +235,23 @@ void main(){
   o = vec4(texture(uVel, vUv).xy + uPush * f, 0.0, 1.0);
 }`;
 const POUR_OIL = HEAD + `
-uniform sampler2D uSrc; uniform vec2 uPoint; uniform float uRadius, uAmt; uniform vec3 uC;
+uniform sampler2D uSrc; uniform vec2 uPoint; uniform float uRadius, uAmt, uSpecial; uniform vec3 uC;
+// Colour is stored premultiplied by depth, so bare ground adds nothing to it.
 void main(){
   vec4 d = texture(uSrc, vUv);
   vec2 q = vUv - uPoint; float f = exp(-dot(q, q) / (uRadius * uRadius)) * uAmt;
+  if (inName(vUv) || (uSpecial < 0.5 && locked(vUv) > 0.5)) { o = d; return; }
   float a = d.a + f;
-  o = inName(vUv) ? d : vec4((d.rgb * d.a + uC * f) / max(a, 1e-4), a);
+  vec3 was = d.a > 1e-4 ? d.rgb / d.a : uC;
+  // New oil takes over the colour where it lands; it is never averaged in.
+  o = vec4(mix(was, uC, smoothstep(0.0, 0.2, f)) * a, a);
 }`;
 // Marks that ride along with the oil: red = yours, green = metal.
 const POUR_MINE = HEAD + `
-uniform sampler2D uSrc; uniform vec2 uPoint; uniform float uRadius; uniform vec2 uWhich;
+uniform sampler2D uSrc; uniform vec2 uPoint; uniform float uRadius; uniform vec4 uWhich;
 void main(){
-  vec2 q = vUv - uPoint; float f = exp(-dot(q, q) / (uRadius * uRadius)) * 0.8;
-  vec2 m = texture(uSrc, vUv).rg;
-  o = vec4(min(vec2(1.0), m + uWhich * f), 0.0, 1.0);
+  vec2 q = vUv - uPoint; float f = min(1.0, exp(-dot(q, q) / (uRadius * uRadius)) * 1.6);
+  o = max(texture(uSrc, vUv), uWhich * f);
 }`;
 
 // Oil spreading under its own weight (thin-film / porous-medium flow): mass
@@ -256,20 +263,25 @@ uniform sampler2D uSrc; uniform vec2 uTexel; uniform float uK; uniform vec4 uEmp
 void main(){
   vec4 c = texture(uSrc, vUv);
   if (inName(vUv)) { o = uEmpty; return; }
-  float h = c.a, h3 = h * h * h;
-  vec3 mass = c.rgb * h; float hn = h;
+  float h = c.a, h3 = h * h * h, lk = locked(vUv);
+  vec3 col = h > 1e-4 ? c.rgb / h : vec3(0.0);
+  vec4 sum = c;
   vec2 off[4] = vec2[4](vec2(uTexel.x, 0), vec2(-uTexel.x, 0), vec2(0, uTexel.y), vec2(0, -uTexel.y));
   for (int i = 0; i < 4; i++) {
     vec2 q = vUv + off[i];
-    vec4 n = inName(q) ? vec4(c.rgb, h) : texture(uSrc, q);    // names are walls
-    // h^3 for the run of deep oil, plus a little levelling so pours merge.
-    float m = min(0.5 * (h3 + n.a * n.a * n.a), 4.0) + 1.6 * step(0.004, max(h, n.a));
+    if (inName(q)) continue;                                   // names are walls
+    // Thick pours and ordinary oil never trade oil, so they never mix.
+    if (abs(locked(q) - lk) > 0.5) continue;
+    vec4 n = texture(uSrc, q);
+    // h^3 for the run of deep oil, levelling only between cells that both hold
+    // oil (so nothing creeps across dry ground), and thick pours run slowly.
+    float m = min(0.5 * (h3 + n.a * n.a * n.a), 4.0) + 1.6 * step(0.03, min(h, n.a));
+    m *= 1.0 - 0.8 * lk;
     float flux = uK * m * (n.a - h);                            // > 0: oil comes in
-    hn += flux;
-    mass += flux > 0.0 ? n.rgb * flux : c.rgb * flux;
+    vec3 ncol = n.a > 1e-4 ? n.rgb / n.a : col;
+    sum += vec4((flux > 0.0 ? ncol : col) * flux, flux);
   }
-  hn = max(hn, 0.0);
-  o = vec4(hn > 1e-4 ? clamp(mass / hn, 0.0, 1.0) : c.rgb, hn);
+  o = max(sum, vec4(0.0));
 }`;
 
 const DIV = HEAD + `
@@ -295,6 +307,16 @@ void main(){
   o = vec4(inName(vUv) ? vec2(0.0) : v, 0.0, 1.0);
 }`;
 
+// The sites' pours, shrunk to a small grid so their shapes can be found.
+const DOORMAP = HEAD + `
+uniform vec4 uCrop;
+void main(){ vec2 uv = uCrop.xy + vUv * uCrop.zw; o = vec4(texture(uMarks, uv).b, 0.0, 0.0, 1.0); }`;
+
+// Reads the current at a handful of points (one per output pixel).
+const PROBE = HEAD + `
+uniform sampler2D uVel; uniform vec2 uPts[40];
+void main(){ int i = int(gl_FragCoord.x); o = vec4(texture(uVel, uPts[i]).xy, 0.0, 1.0); }`;
+
 // The surface: oil over a fine-grained ground, lit by a light that circles
 // once a loop. Only the light depends on the loop, so the piece itself rests.
 const DISPLAY = HEAD + `
@@ -309,10 +331,11 @@ vec3 ground(vec2 p){
   float grain = vnoise(p * 1400.0);
   return uGround * (0.955 + 0.05 * fib + 0.03 * grain);
 }
+uniform vec4 uDropC[${MAX_SITES}], uDropF[${MAX_SITES}]; uniform int uDropN;
 float T(vec2 p){ return texture(uDye, p).a; }
-void main(){
-  vec2 uv = uCrop.xy + vUv * uCrop.zw;
+vec3 shade(vec2 uv){
   vec4 d = texture(uDye, uv);
+  d.rgb = d.a > 1e-4 ? clamp(d.rgb / d.a, 0.0, 1.0) : uGround;
   float t = d.a;
   // Surface slope from the depth, read over a few texels so the oil is smooth.
   vec2 e = uTexel * 2.6;
@@ -330,9 +353,12 @@ void main(){
   vec3 darkDeep = base * exp(-absorb * t) * 0.6 + d.rgb * body * 0.95;
   vec3 col = mix(ground(uv), mix(lightDeep, darkDeep, uDark), cover);
   // Rainbow film where the oil thins out at its edges.
-  float thin = cover * (1.0 - smoothstep(0.04, 0.12, t));
-  vec3 film = 0.5 + 0.5 * cos(6.2832 * (t * 9.0 + uTh / 6.2832 * 0.0 + vec3(0.0, 0.33, 0.67)));
-  col = mix(col, col * 0.75 + film * 0.3, thin * 0.45);
+  // Its hue depends on depth, place and the oil's own colour, so across the
+  // surface it runs through the whole rainbow instead of settling on a few.
+  float thin = cover * (1.0 - smoothstep(0.04, 0.09, t));
+  float ph = t * 25.0 + vnoise(uv * 40.0) * 2.0 + dot(d.rgb, vec3(1.7, 2.9, 4.3));
+  vec3 film = 0.5 + 0.5 * cos(6.2832 * (ph + vec3(0.0, 0.33, 0.67)));
+  col = mix(col, col * 0.8 + film * 0.25, thin * 0.35);
   // Its edge: a sharp meniscus line, darker, with a bright lip just inside.
   // Only where oil meets bare ground.
   float w = max(fwidth(t), 1e-5);
@@ -355,9 +381,29 @@ void main(){
   vec3 film2 = 0.5 + 0.5 * cos(6.2832 * (t * 4.0 + dot(N.xy, vec2(1.5, -1.0)) + uTh / 6.2832 + vec3(0.0, 0.33, 0.67)));
   col = mix(col, col * 0.55 + film2 * 0.55, m * 0.55) + m * pow(nh, 60.0) * 0.5;
   // The names: set into the surface, the oil heaped against their sides.
-  vec4 mk = texture(uMask, uv);
-  col += cover * mk.g * (1.0 - mk.r) * 0.18;
-  col = mix(col, uInk, smoothstep(0.35, 0.65, mk.r));
+  return col;
+}
+void main(){
+  vec2 uv = uCrop.xy + vUv * uCrop.zw;
+  vec3 col = shade(uv);
+  vec3 L = normalize(vec3(cos(uTh) * 0.5, sin(uTh) * 0.5 + 0.3, 1.0)), H = normalize(L + vec3(0, 0, 1));
+  // The sites: thick clear drops of the same oil, stretched by the flow they
+  // rode in. Each magnifies and bends what lies beneath it.
+  for (int i = 0; i < ${MAX_SITES}; i++) {
+    if (i >= uDropN) break;
+    vec2 c = uDropC[i].xy; float R = uDropC[i].z; vec4 F = uDropF[i];   // F: inverse shape, column-major
+    vec2 q = mat2(F.x, F.y, F.z, F.w) * (uv - c) / R; float r = length(q);
+    col *= 1.0 - 0.2 * smoothstep(1.3, 1.0, r) * step(1.0, r);           // contact shadow
+    if (r < 1.0) {
+      float z = sqrt(1.0 - r * r);
+      vec3 N = normalize(vec3(q * 0.9, z));
+      vec2 seen = c + (uv - c) * (0.45 + 0.25 * r * r) - N.xy * R * 0.12;
+      col = shade(seen) * 0.95 + uInk * 0.03;
+      float nh = max(dot(N, H), 0.0);
+      col += pow(nh, 140.0) * 1.1 + pow(nh, 18.0) * 0.08 + pow(1.0 - z, 3.0) * 0.3;
+      col *= 1.0 - 0.3 * smoothstep(0.9, 1.0, r);
+    }
+  }
   o = vec4(clamp(col, 0.0, 1.0), 1.0);
 }`;
 
@@ -381,7 +427,7 @@ function sim(canvas, opts) {
   };
   const P = { advect: compile(ADVECT), mc: compile(MACCORMACK), flow: compile(FLOW), pv: compile(POUR_VEL),
               po: compile(POUR_OIL), pm: compile(POUR_MINE), div: compile(DIV), jac: compile(JACOBI),
-              grad: compile(GRAD), show: compile(DISPLAY), spread: compile(SPREAD) };
+              grad: compile(GRAD), show: compile(DISPLAY), spread: compile(SPREAD), probe: compile(PROBE), dmap: compile(DOORMAP) };
   const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
@@ -397,21 +443,24 @@ function sim(canvas, opts) {
   const pair = (w, h, i, f) => { const a = tex(w, h, i, f), b = tex(w, h, i, f); return { r: a, w: b, swap() { [this.r, this.w] = [this.w, this.r]; } }; };
   const vel = pair(SV, SV, gl.RG16F, gl.RG), prs = pair(SV, SV, gl.R16F, gl.RED), div = tex(SV, SV, gl.R16F, gl.RED);
   const dye = pair(SD, SD, gl.RGBA16F, gl.RGBA), hat = tex(SD, SD, gl.RGBA16F, gl.RGBA), back = tex(SD, SD, gl.RGBA16F, gl.RGBA);
-  const mine = pair(SM, SM, gl.RG16F, gl.RG);
+  const mine = pair(SM, SM, gl.RGBA16F, gl.RGBA);
   const mask = gl.createTexture();
+  const probeT = tex(40, 1, gl.RGBA16F, gl.RGBA), probeBuf = new Float32Array(160);
+  const DM = 96, dmapT = tex(DM, DM, gl.RGBA16F, gl.RGBA), dmapBuf = new Float32Array(DM * DM * 4);
 
   let ground = [0, 0, 0];
   const bindT = (unit, t) => { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); return unit; };
   const run = (prog, target, set) => {
     gl.useProgram(prog.p);
     gl.uniform1i(prog.u("uMask"), bindT(7, mask));
+    gl.uniform1i(prog.u("uMarks"), bindT(6, mine.r.t));
     set(prog);
     if (target) { gl.bindFramebuffer(gl.FRAMEBUFFER, target.fb); gl.viewport(0, 0, target.w, target.h); }
     else { gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, canvas.width, canvas.height); }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   };
   const DT = 0.6, tx = [1 / SV, 1 / SV];
-  const empty = () => [ground[0], ground[1], ground[2], 0];
+  const empty = () => [0, 0, 0, 0];
 
   return {
     reset(g, maskCanvas) {
@@ -422,17 +471,18 @@ function sim(canvas, opts) {
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, maskCanvas);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-      for (const t of [dye.r, dye.w]) { gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb); gl.clearColor(g[0], g[1], g[2], 0); gl.clear(gl.COLOR_BUFFER_BIT); }
+      for (const t of [dye.r, dye.w]) { gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); }
       for (const t of [vel.r, vel.w, prs.r, prs.w, mine.r, mine.w]) { gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); }
     },
     // One drop of the stream at the spout.
-    pour(x, y, r, push, c, amt, isMine, metal) {
+    pour(x, y, r, push, c, amt, isMine, metal, isDoor) {
       run(P.pv, vel.w, pr => { gl.uniform1i(pr.u("uVel"), bindT(0, vel.r.t)); gl.uniform2f(pr.u("uPoint"), x, y);
         gl.uniform1f(pr.u("uRadius"), r * 1.6); gl.uniform2fv(pr.u("uPush"), push); }); vel.swap();
       run(P.po, dye.w, pr => { gl.uniform1i(pr.u("uSrc"), bindT(0, dye.r.t)); gl.uniform2f(pr.u("uPoint"), x, y);
-        gl.uniform1f(pr.u("uRadius"), r); gl.uniform1f(pr.u("uAmt"), amt); gl.uniform3fv(pr.u("uC"), c); }); dye.swap();
-      if (isMine || metal) { run(P.pm, mine.w, pr => { gl.uniform1i(pr.u("uSrc"), bindT(0, mine.r.t)); gl.uniform2f(pr.u("uPoint"), x, y);
-        gl.uniform1f(pr.u("uRadius"), r * 1.2); gl.uniform2f(pr.u("uWhich"), isMine ? 1 : 0, metal ? 1 : 0); }); mine.swap(); }
+        gl.uniform1f(pr.u("uRadius"), r); gl.uniform1f(pr.u("uAmt"), amt); gl.uniform3fv(pr.u("uC"), c);
+        gl.uniform1f(pr.u("uSpecial"), isMine || isDoor ? 1 : 0); }); dye.swap();
+      if (isMine || metal || isDoor) { run(P.pm, mine.w, pr => { gl.uniform1i(pr.u("uSrc"), bindT(0, mine.r.t)); gl.uniform2f(pr.u("uPoint"), x, y);
+        gl.uniform1f(pr.u("uRadius"), r * 1.15); gl.uniform4f(pr.u("uWhich"), isMine ? 1 : 0, metal ? 1 : 0, isDoor ? 1 : 0, 0); }); mine.swap(); }
     },
     step(E, amt) {
       run(P.flow, vel.w, pr => { gl.uniform1i(pr.u("uVel"), bindT(0, vel.r.t)); gl.uniform1i(pr.u("uDye"), bindT(1, dye.r.t));
@@ -461,8 +511,25 @@ function sim(canvas, opts) {
           gl.uniform1f(pr.u("uK"), 0.02); gl.uniform4fv(pr.u("uEmpty"), empty()); }); dye.swap();
       }
     },
-    show(crop, theta, genes, pxPerTexel) {
-      run(P.show, null, pr => { gl.uniform1i(pr.u("uDye"), bindT(0, dye.r.t)); gl.uniform1i(pr.u("uMine"), bindT(1, mine.r.t));
+    // How much of each screen cell (DM x DM over the visible crop) is a site's pour.
+    doorMap(crop) {
+      run(P.dmap, dmapT, pr => { gl.uniform4fv(pr.u("uCrop"), crop); });
+      gl.readPixels(0, 0, DM, DM, gl.RGBA, gl.FLOAT, dmapBuf);
+      return { n: DM, v: i => dmapBuf[i * 4] };
+    },
+    // Current (in uv per step) at up to 40 points.
+    probe(pts) {
+      const flat = new Float32Array(80); pts.forEach((q, i) => flat.set(q, i * 2));
+      run(P.probe, probeT, pr => { gl.uniform1i(pr.u("uVel"), bindT(0, vel.r.t)); gl.uniform2fv(pr.u("uPts[0]"), flat); });
+      gl.readPixels(0, 0, 40, 1, gl.RGBA, gl.FLOAT, probeBuf);
+      return pts.map((_, i) => [probeBuf[i * 4] * DT * tx[0], probeBuf[i * 4 + 1] * DT * tx[1]]);
+    },
+    show(crop, theta, genes, pxPerTexel, drops = []) {
+      run(P.show, null, pr => {
+        const C = new Float32Array(4 * MAX_SITES), F = new Float32Array(4 * MAX_SITES);
+        drops.forEach((d, i) => { C.set([d.c[0], d.c[1], d.R, 0], i * 4); F.set(d.inv, i * 4); });
+        gl.uniform4fv(pr.u("uDropC[0]"), C); gl.uniform4fv(pr.u("uDropF[0]"), F); gl.uniform1i(pr.u("uDropN"), drops.length);
+        gl.uniform1i(pr.u("uDye"), bindT(0, dye.r.t)); gl.uniform1i(pr.u("uMine"), bindT(1, mine.r.t));
         gl.uniform2f(pr.u("uTexel"), 1 / SD, 1 / SD); gl.uniform4fv(pr.u("uCrop"), crop); gl.uniform1f(pr.u("uTh"), theta);
         gl.uniform1f(pr.u("uDark"), genes.dark ? 1 : 0); gl.uniform1f(pr.u("uPx"), pxPerTexel);
         gl.uniform3fv(pr.u("uGround"), genes.bg); gl.uniform3fv(pr.u("uInk"), genes.ink); });
@@ -472,7 +539,7 @@ function sim(canvas, opts) {
 
 // ---- the plan: every stream, in order ------------------------------------------------
 
-const MAX_POURS = 360, SETTLE = 120, MINE_DROPS = 70;
+const MAX_POURS = 360, SETTLE = 120, MINE_DROPS = 30;
 
 // W, H in css px. The simulation is a square covering the screen; the screen
 // shows its middle.
@@ -500,7 +567,7 @@ function plan(state, doors, W, H, maxPours = MAX_POURS) {
     let heading = b[5] / 255 * TAU;
     const turn = ((b[6] / 255) - 0.5) * (mine ? 0.22 : 0.5);   // how the spout's path curls
     const speed = (mine ? 0.0042 : 0.004 + R() * 0.006) * Math.min(crop[2], crop[3]) / 0.6;
-    const r = (mine ? 0.05 : 0.028 + R() * 0.035) * size;
+    const r = (mine ? 0.042 : 0.028 + R() * 0.035) * size;
     const X = ch.x.subarray(i * 8, i * 8 + 8), { c: col, metal } = colourOf(X);
     const path = [];
     for (let k = 0; k < drops; k++) {
@@ -511,9 +578,27 @@ function plan(state, doors, W, H, maxPours = MAX_POURS) {
       if (y < crop[1] + 0.03 || y > crop[1] + crop[3] - 0.03) { heading = -heading; y = clamp(y, crop[1] + 0.03, crop[1] + crop[3] - 0.03); }
       path.push({ x, y, push: [Math.cos(heading) * 1.2, Math.sin(heading) * 1.2], c: col });
     }
-    return { i, E, r, path, metal, amt: mine ? 1.8 : 1.5 };
+    return { i, E, r, path, metal, amt: mine ? 1.7 : 1.1 };
   };
-  return { n, crop, M, doors, mask: nameMask(doors, 1024, toSim, M), streams: idx.map(i => stream(i, false)), mine: stream(n - 1, true) };
+  // Each site is one of the pours: thick oil in its own colour, poured from
+  // where the visit set it down, at a point in the history the visit chooses.
+  const streams = idx.map(i => stream(i, false));
+  for (const d of doors) {
+    const R = rng(fnv(state.hash + "#" + d.name));
+    const [x0, y0] = toSim(d.x, d.y), E = streams.length ? streams[0].E : getEra(1);
+    const path = [];
+    let x = x0, y = y0, heading = R() * TAU;
+    for (let k = 0; k < 16; k++) {
+      heading += (R() - 0.5) * 0.6;
+      x += Math.cos(heading) * 0.0035; y += Math.sin(heading) * 0.0035;
+      path.push({ x, y, push: [0, 0], c: null });
+    }
+    const col = hsl(R(), 0.75 + R() * 0.25, 0.45 + R() * 0.15);
+    path.forEach(p => (p.c = col));
+    const at = Math.floor(R() * (streams.length + 1));
+    streams.splice(at, 0, { i: -1, door: d, E: streams[Math.min(at, streams.length - 1)]?.E || E, r: 0.03 * size, path, amt: 1.8 });
+  }
+  return { n, crop, M, W, H, doors, toSim, mask: nameMask([], 256, toSim, M), streams, mine: stream(n - 1, true) };
 }
 
 // ---- live: the pour, watched ---------------------------------------------------------
@@ -523,14 +608,61 @@ export function createArt(canvas, opts = {}) {
   const S = sim(canvas, O);
   if (!S) return null;
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let genes, P, k, drop, perFrame, onVisit, done, mineDrop;
+  let genes, P, k, drop, perFrame, onVisit, done, mineDrop, drops, stepN;
+  // Carry each site's drop with the current: its centre moves with the flow,
+  // and the flow's stretch across it (read at four points on its rim) deforms
+  // it. A pull back towards round keeps it a little firmer than the oil.
+  function carry() {
+    if (!drops.length) return;
+    const pts = [];
+    for (const d of drops) { const [x, y] = d.c, R = d.R; pts.push([x, y], [x + R, y], [x - R, y], [x, y + R], [x, y - R]); }
+    const v = S.probe(pts), k3 = 3;
+    drops.forEach((d, i) => {
+      const [c, xp, xm, yp, ym] = v.slice(i * 5, i * 5 + 5), R2 = 2 * d.R;
+      d.c[0] = clamp(d.c[0] + c[0] * k3, P.crop[0] + d.R, P.crop[0] + P.crop[2] - d.R);
+      d.c[1] = clamp(d.c[1] + c[1] * k3, P.crop[1] + d.R, P.crop[1] + P.crop[3] - d.R);
+      const G = [(xp[0] - xm[0]) / R2 * k3, (yp[0] - ym[0]) / R2 * k3, (xp[1] - xm[1]) / R2 * k3, (yp[1] - ym[1]) / R2 * k3];
+      const f = d.F;                                   // F = (I + G) F, then ease back towards a circle
+      const n = [f[0] + G[0] * f[0] + G[1] * f[2], f[1] + G[0] * f[1] + G[1] * f[3], f[2] + G[2] * f[0] + G[3] * f[2], f[3] + G[2] * f[1] + G[3] * f[3]];
+      const ease = 0.025;
+      d.F = [n[0] + (1 - n[0]) * ease, n[1] * (1 - ease), n[2] * (1 - ease), n[3] + (1 - n[3]) * ease];
+      const det = d.F[0] * d.F[3] - d.F[1] * d.F[2] || 1;
+      const s = 1 / Math.sqrt(Math.abs(det));          // keep its size
+      d.F = d.F.map(x => x * s);
+      const [a, b, cc, e] = d.F, dt2 = a * e - b * cc;
+      d.inv = [e / dt2, -cc / dt2, -b / dt2, a / dt2];  // column-major inverse for the shader
+    });
+  }
+  // Where each site's pour is now: the centre and size of its oil, read from
+  // the sim every so often (and once more at the end). Pixels go to the site
+  // whose last known centre is nearest.
+  let doorAt = [];
+  function locate() {
+    if (!P.doors.length) return;
+    const m = S.doorMap(P.crop), N = m.n;
+    const acc = P.doors.map(() => [0, 0, 0]);
+    const seed = doorAt.length ? doorAt : P.doors.map(d => ({ x: d.x, y: d.y }));
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const v = m.v(j * N + i); if (v < 0.4) continue;
+      const x = (i + 0.5) / N * P.W, y = (1 - (j + 0.5) / N) * P.H;
+      let best = 0, bd = Infinity;
+      seed.forEach((s, k) => { const dd = (s.x - x) ** 2 + (s.y - y) ** 2; if (dd < bd) { bd = dd; best = k; } });
+      acc[best][0] += x; acc[best][1] += y; acc[best][2] += 1;
+    }
+    const cell = (P.W / N) * (P.H / N);
+    doorAt = P.doors.map((d, k) => acc[k][2]
+      ? { x: acc[k][0] / acc[k][2], y: acc[k][1] / acc[k][2], rPx: Math.max(28, Math.sqrt(acc[k][2] * cell / Math.PI)) }
+      : (doorAt[k] || { x: d.x, y: d.y, rPx: d.rPx }));
+  }
+  function stepAll(E, amt) { S.step(E, amt); if (++stepN % 20 === 0) locate(); }
   const art = {
     set(gn, doors = [], cb) {
       genes = gn; if (cb) onVisit = cb;
       const W = canvas.clientWidth || innerWidth, H = canvas.clientHeight || innerHeight;
       P = plan(gn.state, doors, W, H, O.maxPours);
       S.reset(genes.bg, P.mask);
-      k = 0; drop = 0; done = false; mineDrop = -1;
+      k = 0; drop = 0; done = false; mineDrop = -1; stepN = 0; doorAt = [];
+      drops = P.doors.map(d => ({ d, c: P.toSim(d.x, d.y), R: d.rPx / P.M, F: [1, 0, 0, 1], inv: [1, 0, 0, 1] }));
       const total = P.streams.reduce((s, x) => s + x.path.length, 0);
       const seconds = clamp(6 + 1.6 * Math.log2(P.streams.length + 1), 7, 18);
       perFrame = reduce ? 1e9 : Math.max(1, Math.ceil(total / (seconds * 60)));
@@ -541,25 +673,29 @@ export function createArt(canvas, opts = {}) {
       while (n-- > 0 && !done) {
         if (k < P.streams.length) {
           const s = P.streams[k], p = s.path[drop];
-          if (drop === 0 && onVisit) onVisit(s.i + 1);
-          S.pour(p.x, p.y, s.r, p.push, p.c, s.amt, false, s.metal);
-          S.step(s.E, 0.012);
+          if (drop === 0 && onVisit && s.i >= 0) onVisit(s.i + 1);
+          S.pour(p.x, p.y, s.r, p.push, p.c, s.amt, false, s.metal, !!s.door);
+          stepAll(s.E, 0.012);
           if (++drop >= s.path.length) { drop = 0; k++; }
         } else if (mineDrop < 0) {
           mineDrop = 0; if (onVisit) onVisit(P.n);
           if (!all) return;
         } else if (mineDrop < MINE_DROPS + SETTLE) {
           const m = P.mine;
-          if (mineDrop < MINE_DROPS) { const p = m.path[mineDrop]; S.pour(p.x, p.y, m.r, p.push, p.c, m.amt, true, m.metal); }
-          S.step(m.E, mineDrop < MINE_DROPS ? 0.008 : 0.002);
+          if (mineDrop < MINE_DROPS) { const p = m.path[mineDrop]; S.pour(p.x, p.y, m.r, p.push, p.c, m.amt, true, m.metal, false); }
+          stepAll(m.E, mineDrop < MINE_DROPS ? 0.008 : 0.002);
           mineDrop++;
           if (!reduce && !all) return;                // yours, one drop a frame
-        } else done = true;
+        } else { done = true; locate(); }
       }
     },
     draw(theta) {
       if (!done) art.advance(perFrame);
-      S.show(P.crop, theta, genes, canvas.width / (P.crop[2] * O.dyeRes));
+      S.show(P.crop, theta, genes, canvas.width / (P.crop[2] * O.dyeRes), []);
+    },
+    // Where each site's drop is now, in css px (for its link and the card).
+    doorCenters() {
+      return P.doors.map((d, k) => ({ ...d, ...(doorAt[k] || {}) }));
     },
     snapshot() { return canvas; },
     get done() { return done; },
@@ -575,6 +711,13 @@ export function caption(src, state, genes, doors, scale) {
   const c = document.createElement("canvas"); c.width = w; c.height = h;
   const g = c.getContext("2d");
   g.drawImage(src, 0, 0);
+  g.textAlign = "center"; g.textBaseline = "middle"; g.fillStyle = "#fff";
+  g.shadowColor = "rgba(0,0,0,.55)"; g.shadowBlur = 4 * scale;
+  g.font = `600 ${Math.round(13 * scale)}px ${MONO}`;
+  if ("letterSpacing" in g) g.letterSpacing = `${2.2 * scale}px`;
+  for (const d of doors) g.fillText(d.name, d.x * scale, d.y * scale);
+  g.shadowBlur = 0;
+  if ("letterSpacing" in g) g.letterSpacing = "0px";
   g.textAlign = "left"; g.textBaseline = "alphabetic";
   const pad = 20 * scale, fs = 10 * scale;
   const fade = g.createLinearGradient(0, h - fs * 9 - pad, 0, h);
@@ -603,7 +746,7 @@ export function renderCard(state, genes, theta, w, h, cssScale) {
   art.set(genes, doors);
   art.runToEnd();
   art.draw(theta);
-  return caption(c, state, genes, doors, scale);
+  return caption(c, state, genes, art.doorCenters(), scale);
 }
 
 // What the page says about the visit.

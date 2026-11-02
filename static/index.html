@@ -31,6 +31,9 @@
   .door:hover span,.door:focus-visible span{letter-spacing:.3em}
   .door:focus-visible{outline:1px solid var(--ink); outline-offset:4px}
   .door.set-in{border-radius:8px; color:transparent; transform-origin:center}
+  .door.drop{font-weight:600; font-size:13px; letter-spacing:.16em; will-change:transform; color:#fff;
+    text-shadow:0 1px 2px rgba(0,0,0,.55), 0 0 8px rgba(0,0,0,.35)}
+  .door.drop span{transition:none}
   .door.set-in:focus-visible{outline-offset:2px}
 
   .bar{position:fixed; left:0; right:0; bottom:0; display:flex; align-items:flex-end; justify-content:space-between;
@@ -133,7 +136,7 @@ catch (e) {
   state = { n: 1, hash: hx, epoch_seed: hx, when: "", sites: [], engine: 3 };
 }
 // Each visit is drawn by the engine it was made with, forever.
-const E = await import({ 1: "/static/art-v1.js", 2: "/static/art-v2.js", 3: "/static/art-v3.js", 4: "/static/art-v4.js", 5: "/static/art-v5.js", 6: "/static/art-v6.js", 7: "/static/art-v7.js" }[state.engine] || "/static/art.js");
+const E = await import({ 1: "/static/art-v1.js", 2: "/static/art-v2.js", 3: "/static/art-v3.js", 4: "/static/art-v4.js", 5: "/static/art-v5.js", 6: "/static/art-v6.js", 7: "/static/art-v7.js", 8: "/static/art-v8.js", 9: "/static/art-v9.js" }[state.engine] || "/static/art.js");
 if (E.prepare) await E.prepare(state);   // engine 4 draws the whole history
 const { LOOP, genome, createArt, renderCard, fmtHash } = E;
 const css = E.css || ((c, a = 1) => `rgba(${c.map(x => Math.round(x * 255)).join(",")},${a})`);
@@ -174,14 +177,19 @@ function start() {
 
   // Doors: same placement the shader uses, so each link sits in its room.
   const nav = $("#doors");
-  let doors = [];
+  let doors = [], doorsSettled = false;
   function layout() {
     doors = placeDoors(state, state.sites || [], cw(), ch());
     nav.replaceChildren(...doors.map(d => {
       const a = document.createElement("a");
       a.className = "door"; a.href = d.url;
       const s = document.createElement("span"); s.textContent = d.name; a.appendChild(s);
-      if (d.w) {
+      if (E.doorPos || E.movingDoors) {
+        // A drop of oil carrying the name; it travels, and the link goes with it.
+        a.classList.add("drop");
+        a.style.width = a.style.height = `${d.rPx * 2}px`;
+        a.style.transform = `translate(${(d.x - d.rPx).toFixed(1)}px,${(d.y - d.rPx).toFixed(1)}px)`;
+      } else if (d.w) {
         // The name is drawn in the art itself; the link lies invisibly over it.
         a.classList.add("set-in"); a.setAttribute("aria-label", d.name);
         const bw = d.w + 24, bh = d.h + 16;
@@ -193,6 +201,7 @@ function start() {
       }
       return a;
     }));
+    doorsSettled = false;
     if (art) art.set(genes, doors, n => { if (no) no.textContent = `no. ${n.toLocaleString("en-US")}`; });
   }
 
@@ -239,7 +248,16 @@ function start() {
         if (++tunes >= 3 || scale === before) settled = true;
       }
     }
-    art.draw(theta(now), canvas.width / cw());
+    const th = theta(now);
+    art.draw(th, canvas.width / cw());
+    if (E.doorPos || (E.movingDoors && !doorsSettled)) {
+      const at = E.movingDoors ? art.doorCenters() : doors.map(d => ({ ...d, ...E.doorPos(d, th) }));
+      nav.querySelectorAll(".drop").forEach((a, i) => {
+        const p = at[i]; if (!p) return;
+        a.style.transform = `translate(${(p.x - p.rPx).toFixed(1)}px,${(p.y - p.rPx).toFixed(1)}px)`;
+      });
+      if (E.movingDoors && art.done) doorsSettled = true;    // the flow has stopped; so do they
+    }
     if (!shown) { shown = true; requestAnimationFrame(() => document.body.classList.add("ready")); }
     requestAnimationFrame(tick);
   }
@@ -265,7 +283,7 @@ function start() {
       // The very frame on screen, once the pour has finished.
       if (!art.done) art.runToEnd();
       art.draw(theta(performance.now()));
-      c = E.caption(art.snapshot(), state, genes, doors, canvas.width / cw());
+      c = E.caption(art.snapshot(), state, genes, E.movingDoors ? art.doorCenters() : doors, canvas.width / cw(), theta(performance.now()));
     } else if (E.prepare && E.fixedScale && state.engine >= 5) {
       // Exactly what this screen shows, at print resolution.
       const k = Math.max(2, Math.min(3, 3000 / Math.max(cw(), ch())));

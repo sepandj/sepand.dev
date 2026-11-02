@@ -30,7 +30,10 @@ oldest first, with this visit's thread last and brightest.
   colour closing the space between crossings (`art-v6.js`), 7 = thick paint
   pours (`art-v7.js`), 8 = oil: a fluid simulation with thin-film spreading,
   colours uniformly random from each visit's hash, rare metals, and the site
-  names set into the surface (`art.js`).
+  names set into the surface (`art-v8.js`), 9 = short-lived variant (`art-v9.js`),
+  10 = engine 8's look with fair colours (every hue equally likely, colour
+  stored premultiplied, never averaged), the last pour thick and kept apart, and
+  each site as one of the pours: thick, unmixed oil carrying its name (`art.js`).
 
 Runs in the not-alone container as user `sepandidx` (`deploy/sepand-index.service`,
 port 8001), database `sepandidx`, behind Caddy (`deploy/Caddyfile.snippet`).
