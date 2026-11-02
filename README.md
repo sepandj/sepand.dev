@@ -40,7 +40,9 @@ oldest first, with this visit's thread last and brightest.
   in at its place in the sequence, rides and slightly stretches with the flow as
   a body the oil goes around, and rests when the pour ends; the ground grain and
   slick are carried by the same currents (`art-v12.js`), 13 = engine 12 with the
-  site names set back into the surface as large type the oil flows around (`art.js`).
+  site names set back into the surface as large type the oil flows around
+  (`art-v13.js`), 14 = streams overlap (a new one every two steps) so the count
+  runs fast while each pours gently, with a thinner, freer-running oil (`art.js`).
 
 Runs in the not-alone container as user `sepandidx` (`deploy/sepand-index.service`,
 port 8001), database `sepandidx`, behind Caddy (`deploy/Caddyfile.snippet`).

@@ -1,4 +1,4 @@
-// sepand.dev, engine 13: the history, poured as oil on a thin running slick.
+// sepand.dev, engine 14: the history, poured as oil on a thin running slick.
 //
 // Every visit that has ever happened is a thin stream of coloured oil, poured
 // along a path its hash chooses. A fluid simulation carries it: heavy, damped,
@@ -223,7 +223,7 @@ void main(){
   vec2 v = texture(uVel, vUv).xy;
   vec2 nb = (texture(uVel, vUv + vec2(uTexel.x, 0)).xy + texture(uVel, vUv - vec2(uTexel.x, 0)).xy
            + texture(uVel, vUv + vec2(0, uTexel.y)).xy + texture(uVel, vUv - vec2(0, uTexel.y)).xy) * 0.25;
-  v = mix(v, nb, 0.55) * uDamp;
+  v = mix(v, nb, 0.35) * uDamp;                   // a thin oil: little internal friction
   v *= 1.0 - 0.85 * locked(vUv);                  // the thick pours barely move
   // Gravity: oil runs from where it is deep to where it is shallow.
   float aL = texture(uDye, vUv - vec2(uTexel.x, 0)).a, aR = texture(uDye, vUv + vec2(uTexel.x, 0)).a;
@@ -540,7 +540,7 @@ function sim(canvas, opts) {
         gl.uniform1f(pr.u("uKind"), E.kind); gl.uniform1f(pr.u("uDir"), E.dir); gl.uniform1f(pr.u("uSpin"), E.spin);
         gl.uniform1f(pr.u("uComb"), E.comb); gl.uniform1f(pr.u("uFreq"), E.freq); gl.uniform1f(pr.u("uSeed"), E.seed);
         gl.uniform2fv(pr.u("uCenter"), E.center); gl.uniform1f(pr.u("uAmt"), amt * E.flow);
-        gl.uniform1f(pr.u("uDamp"), 0.965); gl.uniform1f(pr.u("uSpread"), 0.7); }); vel.swap();
+        gl.uniform1f(pr.u("uDamp"), 0.978); gl.uniform1f(pr.u("uSpread"), 0.7); }); vel.swap();
       run(P.advect, vel.w, pr => { gl.uniform1i(pr.u("uVel"), bindT(0, vel.r.t)); gl.uniform1i(pr.u("uSrc"), bindT(1, vel.r.t));
         gl.uniform2fv(pr.u("uTexel"), tx); gl.uniform1f(pr.u("uDt"), DT); gl.uniform4f(pr.u("uEmpty"), 0, 0, 0, 0); gl.uniform1f(pr.u("uKeep"), 0); }); vel.swap();
       run(P.div, div, pr => { gl.uniform1i(pr.u("uVel"), bindT(0, vel.r.t)); gl.uniform2fv(pr.u("uTexel"), tx); });
@@ -561,7 +561,7 @@ function sim(canvas, opts) {
       run(P.crisp, mine.w, pr => { gl.uniform1i(pr.u("uSrc"), bindT(0, mine.r.t)); }); mine.swap();
       for (let k = 0; k < 2; k++) {
         run(P.spread, dye.w, pr => { gl.uniform1i(pr.u("uSrc"), bindT(0, dye.r.t)); gl.uniform2f(pr.u("uTexel"), 1 / SD, 1 / SD);
-          gl.uniform1f(pr.u("uK"), 0.02); gl.uniform4fv(pr.u("uEmpty"), empty()); }); dye.swap();
+          gl.uniform1f(pr.u("uK"), 0.032); gl.uniform4fv(pr.u("uEmpty"), empty()); }); dye.swap();
       }
     },
     // How much of each screen cell (DM x DM over the visible crop) is a site's pour.
@@ -630,9 +630,9 @@ function plan(state, doors, W, H, maxPours = MAX_POURS) {
       // the spout stays on screen, turning back at the edges
       if (x < crop[0] + 0.03 || x > crop[0] + crop[2] - 0.03) { heading = Math.PI - heading; x = clamp(x, crop[0] + 0.03, crop[0] + crop[2] - 0.03); }
       if (y < crop[1] + 0.03 || y > crop[1] + crop[3] - 0.03) { heading = -heading; y = clamp(y, crop[1] + 0.03, crop[1] + crop[3] - 0.03); }
-      path.push({ x, y, push: [Math.cos(heading) * 1.2, Math.sin(heading) * 1.2], c: col });
+      path.push({ x, y, push: [Math.cos(heading) * 0.45, Math.sin(heading) * 0.45], c: col });
     }
-    return { i, E, r, path, metal, amt: mine ? 1.7 : 1.1 };
+    return { i, E, r, path, metal, amt: mine ? 1.7 : 1.2 };
   };
   const streams = idx.map(i => stream(i, false));
   return { n, crop, M, W, H, doors, toSim, mask: nameMask(doors, 1024, toSim, M), streams, mine: stream(n - 1, true) };
@@ -645,7 +645,8 @@ export function createArt(canvas, opts = {}) {
   const S = sim(canvas, O);
   if (!S) return null;
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let genes, P, k, drop, perFrame, onVisit, done, mineDrop, drops, stepN;
+  let genes, P, k, drop, perFrame, onVisit, done, mineDrop, drops, stepN, active, stepIdx;
+  const GAP = 2;
   // Carry each site's drop with the current: its centre moves with the flow,
   // and the flow's stretch across it (read at four points on its rim) deforms
   // it. A pull back towards round keeps it a little firmer than the oil.
@@ -707,7 +708,10 @@ export function createArt(canvas, opts = {}) {
       k = 0; drop = 0; done = false; mineDrop = -1; stepN = 0; doorAt = [];
       drops = P.doors.map(d => ({ d, c: P.toSim(d.x, d.y), R: 0, full: d.rPx / P.M, on: false, F: [1, 0, 0, 1], inv: [1, 0, 0, 1] }));
       S.setBodies([]);
-      const total = P.streams.reduce((s, x) => s + x.path.length, 0);
+      // A new stream starts every GAP steps while earlier ones are still
+      // pouring, so the count runs quickly while each stream oozes in slowly.
+      active = []; stepIdx = 0;
+      const total = P.streams.length * GAP + 20;
       const seconds = clamp(6 + 1.6 * Math.log2(P.streams.length + 1), 7, 18);
       perFrame = reduce ? 1e9 : Math.max(1, Math.ceil(total / (seconds * 60)));
     },
@@ -715,18 +719,21 @@ export function createArt(canvas, opts = {}) {
     advance(budget, all) {
       let n = budget;
       while (n-- > 0 && !done) {
-        if (k < P.streams.length) {
-          const s = P.streams[k], p = s.path[drop];
-          if (drop === 0 && onVisit && s.i >= 0) onVisit(s.i + 1);
-          if (s.door) {
-            // A site's drop pours in: it grows as its drops land, then the
-            // flow carries it like the oil around it, only more slowly.
-            const b = drops[P.doors.indexOf(s.door)];
-            b.R = b.full * (0.25 + 0.75 * (drop + 1) / s.path.length);
-            if (!b.on) { b.on = true; S.setBodies(drops.filter(x => x.on)); }
-          } else S.pour(p.x, p.y, s.r, p.push, p.c, s.amt, false, s.metal, false);
-          stepAll(s.E, 0.012);
-          if (++drop >= s.path.length) { drop = 0; k++; }
+        if (k < P.streams.length || active.length) {
+          if (k < P.streams.length && stepIdx % GAP === 0) {
+            const s = P.streams[k++];
+            active.push({ s, drop: 0 });
+            if (onVisit && s.i >= 0) onVisit(s.i + 1);
+          }
+          let E = null;
+          for (const a of active) {
+            const p = a.s.path[a.drop++];
+            S.pour(p.x, p.y, a.s.r, p.push, p.c, a.s.amt, false, a.s.metal, false);
+            E = a.s.E;
+          }
+          active = active.filter(a => a.drop < a.s.path.length);
+          stepAll(E || P.mine.E, 0.012);
+          stepIdx++;
         } else if (mineDrop < 0) {
           mineDrop = 0; if (onVisit) onVisit(P.n);
           if (!all) return;
