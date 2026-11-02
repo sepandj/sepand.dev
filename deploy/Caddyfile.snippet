@@ -1,7 +1,5 @@
-# sepand.dev index. While in preview it is served at preview.sepand.dev;
-# when the root domain moves here, add "sepand.dev, www.sepand.dev" to this
-# site address list (www redirects to the bare domain).
-preview.sepand.dev {
+# sepand.dev: the index of every *.sepand.dev site.
+sepand.dev {
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:8001
 	header {
@@ -12,4 +10,9 @@ preview.sepand.dev {
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		-Server
 	}
+}
+
+# Old preview address and www both land on the bare domain, path kept.
+www.sepand.dev, preview.sepand.dev {
+	redir https://sepand.dev{uri} permanent
 }
