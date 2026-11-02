@@ -1,4 +1,4 @@
-// sepand.dev, engine 10: the history, poured as oil.
+// sepand.dev, engine 11: the history, poured as oil on a thin running slick.
 //
 // Every visit that has ever happened is a thin stream of coloured oil, poured
 // along a path its hash chooses. A fluid simulation carries it: heavy, damped,
@@ -312,6 +312,12 @@ const DOORMAP = HEAD + `
 uniform vec4 uCrop;
 void main(){ vec2 uv = uCrop.xy + vUv * uCrop.zw; o = vec4(texture(uMarks, uv).b, 0.0, 0.0, 1.0); }`;
 
+// Keeps the marks for yours and the sites crisp, so being carried never
+// thins them out into the oil around them.
+const CRISP = HEAD + `
+uniform sampler2D uSrc;
+void main(){ vec4 m = texture(uSrc, vUv); o = vec4(smoothstep(0.3, 0.7, m.r), m.g, smoothstep(0.3, 0.7, m.b), m.a); }`;
+
 // Reads the current at a handful of points (one per output pixel).
 const PROBE = HEAD + `
 uniform sampler2D uVel; uniform vec2 uPts[40];
@@ -342,8 +348,10 @@ vec3 shade(vec2 uv){
   float tx = T(uv + vec2(e.x, 0)) - T(uv - vec2(e.x, 0)), ty = T(uv + vec2(0, e.y)) - T(uv - vec2(0, e.y));
   tx += 0.5 * (T(uv + vec2(e.x, e.y)) - T(uv - vec2(e.x, -e.y)) + T(uv + vec2(e.x, -e.y)) - T(uv - vec2(e.x, e.y)));
   ty += 0.5 * (T(uv + vec2(e.x, e.y)) - T(uv + vec2(e.x, -e.y)) + T(uv + vec2(-e.x, e.y)) - T(uv - vec2(e.x, e.y)));
-  vec3 N = normalize(vec3(-tx * 0.5, -ty * 0.5, 1.0));
-  float cover = smoothstep(0.03, 0.045, t);                 // where there is oil at all (thinner film is not drawn)
+  // The slick everywhere has faint ripples, so the light catches on it too.
+  vec2 rip = vec2(vnoise(uv * 90.0) - vnoise(uv * 90.0 + 3.1), vnoise(uv * 90.0 + 7.7) - vnoise(uv * 90.0 + 1.3));
+  vec3 N = normalize(vec3(-tx * 0.5 + rip.x * 0.05, -ty * 0.5 + rip.y * 0.05, 1.0));
+  float cover = smoothstep(0.03, 0.045, t);                 // where poured oil lies
   // Through the oil: the ground, bent, then coloured by how deep the oil is.
   // On a dark ground the oil's own colour glows instead.
   vec3 base = ground(uv + N.xy * 0.012 * cover);
@@ -369,17 +377,34 @@ vec3 shade(vec2 uv){
   float nh = max(dot(N, H), 0.0);
   float fres = pow(1.0 - N.z, 2.0);
   col += cover * (pow(nh, 260.0) * 0.95 + pow(nh, 28.0) * 0.1 + fres * 0.35);
+  // The ground lies under a thin slick of clear, runny oil: faint ripples that
+  // catch the light, a soft sheen, and a little colour where it thins.
+  vec3 slickN = normalize(vec3(rip * 0.5, 1.0));
+  float snh = max(dot(slickN, H), 0.0);
+  vec3 sfilm = 0.5 + 0.5 * cos(6.2832 * (vnoise(uv * 12.0) * 1.5 + vec3(0.0, 0.33, 0.67)));
+  col += (1.0 - cover) * (pow(snh, 300.0) * 0.55 + pow(snh, 40.0) * 0.05 + pow(1.0 - slickN.z, 2.0) * 0.3);
+  col = mix(col, col * 0.92 + sfilm * 0.08, (1.0 - cover) * 0.6);
   // Metal: an opaque mirror, tinted, reflecting a soft studio of light.
-  vec2 marks = texture(uMine, uv).rg;
+  vec4 marks = texture(uMine, uv);
   float met = smoothstep(0.15, 0.5, marks.g) * cover;
   vec3 Rf = reflect(vec3(0, 0, -1), N);
   float studio = 0.35 + 0.65 * smoothstep(-0.2, 0.6, Rf.y * cos(uTh * 0.5) + Rf.x * sin(uTh * 0.5));
   vec3 metal = d.rgb * (0.18 + 0.82 * studio) + pow(nh, 90.0) * mix(d.rgb, vec3(1.0), 0.5) * 1.2;
   col = mix(col, metal, met);
-  // Yours keeps a thin-film shimmer all over.
-  float m = marks.r * cover;
-  vec3 film2 = 0.5 + 0.5 * cos(6.2832 * (t * 4.0 + dot(N.xy, vec2(1.5, -1.0)) + uTh / 6.2832 + vec3(0.0, 0.33, 0.67)));
-  col = mix(col, col * 0.55 + film2 * 0.55, m * 0.55) + m * pow(nh, 60.0) * 0.5;
+  // Yours: a strong oil-slick shimmer all over and a glowing edge, so it is
+  // the one you find first.
+  float m = smoothstep(0.4, 0.6, marks.r);
+  vec3 film2 = 0.5 + 0.5 * cos(6.2832 * (t * 3.0 + dot(N.xy, vec2(2.0, -1.4)) + uTh / 6.2832 + vec3(0.0, 0.33, 0.67)));
+  col = mix(col, col * 0.4 + film2 * 0.75, m * 0.7) + m * pow(nh, 50.0) * 0.7;
+  float mw = max(fwidth(marks.r), 1e-4);
+  col += film2 * (1.0 - smoothstep(0.0, 2.0 * uPx, abs(marks.r - 0.5) / mw)) * 0.9;
+  // The sites: thick, clear oil. No colour of its own; it bends the ground
+  // beneath it, carries a sharp glint, and is held in by a dark rim.
+  float door = smoothstep(0.4, 0.6, marks.b);
+  vec3 clear = ground(uv + N.xy * 0.05) * 0.96 + pow(nh, 160.0) * 1.2 + pow(nh, 20.0) * 0.12 + fres * 0.5;
+  col = mix(col, clear, door);
+  float dw = max(fwidth(marks.b), 1e-4);
+  col *= 1.0 - 0.55 * (1.0 - smoothstep(0.0, 1.8 * uPx, abs(marks.b - 0.5) / dw));
   // The names: set into the surface, the oil heaped against their sides.
   return col;
 }
@@ -427,7 +452,7 @@ function sim(canvas, opts) {
   };
   const P = { advect: compile(ADVECT), mc: compile(MACCORMACK), flow: compile(FLOW), pv: compile(POUR_VEL),
               po: compile(POUR_OIL), pm: compile(POUR_MINE), div: compile(DIV), jac: compile(JACOBI),
-              grad: compile(GRAD), show: compile(DISPLAY), spread: compile(SPREAD), probe: compile(PROBE), dmap: compile(DOORMAP) };
+              grad: compile(GRAD), show: compile(DISPLAY), spread: compile(SPREAD), probe: compile(PROBE), dmap: compile(DOORMAP), crisp: compile(CRISP) };
   const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
@@ -490,7 +515,7 @@ function sim(canvas, opts) {
         gl.uniform1f(pr.u("uKind"), E.kind); gl.uniform1f(pr.u("uDir"), E.dir); gl.uniform1f(pr.u("uSpin"), E.spin);
         gl.uniform1f(pr.u("uComb"), E.comb); gl.uniform1f(pr.u("uFreq"), E.freq); gl.uniform1f(pr.u("uSeed"), E.seed);
         gl.uniform2fv(pr.u("uCenter"), E.center); gl.uniform1f(pr.u("uAmt"), amt * E.flow);
-        gl.uniform1f(pr.u("uDamp"), 0.93); gl.uniform1f(pr.u("uSpread"), 0.7); }); vel.swap();
+        gl.uniform1f(pr.u("uDamp"), 0.965); gl.uniform1f(pr.u("uSpread"), 0.7); }); vel.swap();
       run(P.advect, vel.w, pr => { gl.uniform1i(pr.u("uVel"), bindT(0, vel.r.t)); gl.uniform1i(pr.u("uSrc"), bindT(1, vel.r.t));
         gl.uniform2fv(pr.u("uTexel"), tx); gl.uniform1f(pr.u("uDt"), DT); gl.uniform4f(pr.u("uEmpty"), 0, 0, 0, 0); }); vel.swap();
       run(P.div, div, pr => { gl.uniform1i(pr.u("uVel"), bindT(0, vel.r.t)); gl.uniform2fv(pr.u("uTexel"), tx); });
@@ -506,6 +531,7 @@ function sim(canvas, opts) {
         gl.uniform2fv(pr.u("uTexel"), tx); gl.uniform2f(pr.u("uDyeTexel"), 1 / SD, 1 / SD); gl.uniform1f(pr.u("uDt"), DT);
         gl.uniform4fv(pr.u("uEmpty"), empty()); }); dye.swap();
       adv(mine.r, mine.w, DT, [0, 0, 0, 0]); mine.swap();
+      run(P.crisp, mine.w, pr => { gl.uniform1i(pr.u("uSrc"), bindT(0, mine.r.t)); }); mine.swap();
       for (let k = 0; k < 2; k++) {
         run(P.spread, dye.w, pr => { gl.uniform1i(pr.u("uSrc"), bindT(0, dye.r.t)); gl.uniform2f(pr.u("uTexel"), 1 / SD, 1 / SD);
           gl.uniform1f(pr.u("uK"), 0.02); gl.uniform4fv(pr.u("uEmpty"), empty()); }); dye.swap();

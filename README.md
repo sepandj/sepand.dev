@@ -33,7 +33,10 @@ oldest first, with this visit's thread last and brightest.
   names set into the surface (`art-v8.js`), 9 = short-lived variant (`art-v9.js`),
   10 = engine 8's look with fair colours (every hue equally likely, colour
   stored premultiplied, never averaged), the last pour thick and kept apart, and
-  each site as one of the pours: thick, unmixed oil carrying its name (`art.js`).
+  each site as one of the pours: thick, unmixed oil carrying its name
+  (`art-v10.js`), 11 = the same with your pour shimmering and edged in light,
+  the sites' pours as clear thick oil, and the ground under a thin runny slick
+  that pours slide on (`art.js`).
 
 Runs in the not-alone container as user `sepandidx` (`deploy/sepand-index.service`,
 port 8001), database `sepandidx`, behind Caddy (`deploy/Caddyfile.snippet`).
