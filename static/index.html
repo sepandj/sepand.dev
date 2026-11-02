@@ -5,67 +5,62 @@
 <title>sepand.dev</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="sepand.dev">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#e9e6df">
 <!--OG-->
 <style>
+  /* Colours come from the visit (see genome): --ink for type and lines,
+     --ground for the paper. */
   :root{
-    --fg:#fff; --mono:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
-    color-scheme:dark;
+    --ink:#3a3832; --ground:#e9e6df;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
   }
   *{box-sizing:border-box}
   [hidden]{display:none !important}
-  html,body{margin:0; height:100%; background:#000; color:var(--fg); overflow:hidden;
+  html,body{margin:0; height:100%; background:var(--ground); color:var(--ink); overflow:hidden;
     font-family:var(--mono); -webkit-font-smoothing:antialiased; -webkit-tap-highlight-color:transparent}
-  canvas#art{position:fixed; inset:0; width:100vw; height:100vh; height:100dvh; display:block}
-  .fallback{position:fixed; inset:0}
+  canvas#art{position:fixed; inset:0; width:100vw; height:100vh; height:100dvh; display:block; background:var(--ground)}
 
-  /* Floating doors to each site. White with a soft dark halo stays readable
-     over any colour the art turns into. */
+  /* Doors live inside the drawing: each is the quiet room the lines curl
+     around. The link is the whole room. */
   .doors{position:fixed; inset:0; pointer-events:none}
-  .door{position:absolute; left:0; top:0; pointer-events:auto; color:#fff; text-decoration:none;
-    text-shadow:0 0 2px rgba(0,0,0,.55), 0 0 14px rgba(0,0,0,.45); font-weight:600;
-    font-size:clamp(15px,2.2vw,22px); letter-spacing:.18em; text-transform:lowercase; white-space:nowrap;
-    padding:14px 16px; will-change:transform; touch-action:manipulation}
-  .door::after{content:""; display:block; height:1px; background:currentColor; transform:scaleX(.0);
-    transform-origin:left; transition:transform .5s ease}
-  .door:hover::after,.door:focus-visible::after{transform:scaleX(1)}
-  .door:focus-visible{outline:1px solid #fff; outline-offset:2px}
+  .door{position:absolute; left:0; top:0; pointer-events:auto; border-radius:50%;
+    display:grid; place-items:center; text-align:center; color:var(--ink); text-decoration:none;
+    font-size:12px; letter-spacing:.16em; line-height:1.4; padding:12px; touch-action:manipulation}
+  .door span{transition:letter-spacing .5s ease}
+  .door:hover span,.door:focus-visible span{letter-spacing:.3em}
+  .door:focus-visible{outline:1px solid var(--ink); outline-offset:4px}
 
   .bar{position:fixed; left:0; right:0; bottom:0; display:flex; align-items:flex-end; justify-content:space-between;
     gap:12px; padding:16px max(16px,env(safe-area-inset-right)) max(14px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));
-    color:#fff; pointer-events:none; text-shadow:0 0 2px rgba(0,0,0,.6), 0 0 10px rgba(0,0,0,.5)}
+    pointer-events:none}
   .mark{font-size:11px; letter-spacing:.12em; line-height:1.7; min-width:0}
   .mark b{font-weight:600; letter-spacing:.2em}
-  .mark .once{display:block; opacity:.85; letter-spacing:.08em}
+  .mark .once{display:block; opacity:.75; letter-spacing:.08em}
   .acts{display:flex; gap:8px; pointer-events:auto; flex-shrink:0}
-  .acts button,.acts a{font:inherit; font-size:12px; letter-spacing:.14em; color:#fff; background:transparent;
-    border:1px solid rgba(255,255,255,.7); border-radius:999px; min-height:44px; padding:0 16px; cursor:pointer;
-    background:rgba(0,0,0,.28); -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); text-shadow:none;
-    display:inline-flex; align-items:center; text-decoration:none}
-  .acts button:disabled{opacity:.35; cursor:default}
+  .btn{font:inherit; font-size:12px; letter-spacing:.14em; color:var(--ink);
+    border:1px solid color-mix(in srgb, var(--ink) 55%, transparent); border-radius:999px; min-height:44px; padding:0 16px; cursor:pointer;
+    background:color-mix(in srgb, var(--ground) 70%, transparent); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+    display:inline-flex; align-items:center; justify-content:center; text-decoration:none}
+  .btn:disabled{opacity:.35; cursor:default}
+  .btn:focus-visible{outline:1px solid var(--ink); outline-offset:3px}
   .toast{position:fixed; left:50%; bottom:calc(84px + env(safe-area-inset-bottom)); transform:translateX(-50%);
-    font-size:11px; letter-spacing:.12em; color:#fff; background:rgba(0,0,0,.45); padding:8px 14px; border-radius:999px;
+    font-size:11px; letter-spacing:.12em; color:var(--ground); background:var(--ink); padding:8px 14px; border-radius:999px;
     opacity:0; transition:opacity .4s; pointer-events:none}
   .toast.on{opacity:.9}
 
   /* the "!" */
   .bang{position:fixed; z-index:3; top:max(14px,env(safe-area-inset-top)); right:max(14px,env(safe-area-inset-right));
-    width:44px; height:44px; border-radius:50%; border:1px solid rgba(255,255,255,.7); background:rgba(0,0,0,.28);
-    -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); color:#fff; font:600 17px/1 var(--mono);
-    cursor:pointer; display:grid; place-items:center; padding:0}
-  .bang:focus-visible,.acts button:focus-visible,.acts a:focus-visible{outline:1px solid #fff; outline-offset:3px}
+    width:44px; padding:0; font-weight:600; font-size:16px}
 
   .note{position:fixed; inset:0; z-index:4; display:grid; place-items:center; padding:24px;
-    background:rgba(0,0,0,.45); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+    background:color-mix(in srgb, var(--ground) 88%, transparent); -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);
     opacity:0; transition:opacity .35s ease}
   .note.on{opacity:1}
-  .note-in{max-width:30rem; color:#fff; font-size:14px; line-height:1.85; letter-spacing:.02em}
+  .note-in{max-width:30rem; font-size:14px; line-height:1.85; letter-spacing:.02em}
   .note-in p{margin:0 0 1.1em}
-  .note-in .fp{margin-top:1.6em; font-size:11px; letter-spacing:.1em; opacity:.7; word-spacing:.2em}
-  .note-in .sig{opacity:.7}
-  .note .x{position:absolute; top:max(14px,env(safe-area-inset-top)); right:max(14px,env(safe-area-inset-right));
-    width:44px; height:44px; border-radius:50%; border:1px solid rgba(255,255,255,.7); background:transparent;
-    color:#fff; cursor:pointer; display:grid; place-items:center; padding:0}
+  .note-in .fp{margin-top:1.6em; font-size:11px; letter-spacing:.1em; opacity:.6; word-spacing:.2em}
+  .note-in .sig{opacity:.6}
+  .note .x{position:absolute; top:max(14px,env(safe-area-inset-top)); right:max(14px,env(safe-area-inset-right)); width:44px; padding:0}
   .note .x svg{width:14px; height:14px}
   body.render .doors, body.render .bar, body.render .toast, body.render .bang{display:none}
 </style>
@@ -76,29 +71,28 @@
 <div class="bar">
   <div class="mark" id="mark" aria-live="polite"></div>
   <div class="acts" id="acts" hidden>
-    <button type="button" id="save" disabled>keep</button>
-    <button type="button" id="share" disabled>share</button>
+    <button class="btn" type="button" id="save" disabled>keep</button>
+    <button class="btn" type="button" id="share" disabled>share</button>
   </div>
 </div>
 <div class="toast" id="toast" role="status"></div>
-<button class="bang" id="bang" type="button" aria-label="what is this" aria-haspopup="dialog">!</button>
+<button class="btn bang" id="bang" type="button" aria-label="what is this" aria-haspopup="dialog">!</button>
 <div class="note" id="note" role="dialog" aria-modal="true" aria-label="what is this" hidden>
-  <button class="x" id="noteX" type="button" aria-label="close">
+  <button class="btn x" id="noteX" type="button" aria-label="close">
     <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 2l10 10M12 2L2 12"/></svg>
   </button>
   <div class="note-in">
     <p>the moment you arrived, this page was made for you.</p>
     <p>it grew from a fingerprint sealed to your visit and chained to every visit before it. no one else will be given this one, and you won't be given it again. come back and it will be something else.</p>
     <p>every visit leaves the next one a little more intricate. once in a long while a rare one arrives, and everything after it changes.</p>
+    <p>the quiet circles the lines bend around are doors to the other things i make. each new one changes everything that comes after it.</p>
     <p>keep it, or share it. the link will always open this one.</p>
-    <p>the words floating around are doors to the other things i make.</p>
     <p class="sig">sepand</p>
     <p class="fp" id="fp"></p>
   </div>
 </div>
 
 <script type="module">
-import { LOOP, genome, createArt, renderCard, fmtHash } from "/static/art.js";
 
 const $ = s => document.querySelector(s);
 const path = location.pathname;
@@ -122,46 +116,26 @@ function toast(t) {
   clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("on"), 2200);
 }
 
-// ---- floating doors ----
-// Each door drifts on its own closed curve (whole-number frequencies), so
-// it is back where it started every loop.
-function doors(sites, H, theta0) {
-  const nav = $("#doors"), els = [];
-  const b = i => parseInt(H.slice((i * 2) % 64, (i * 2) % 64 + 2), 16) / 255;
-  sites.forEach((s, i) => {
-    const a = document.createElement("a");
-    a.className = "door"; a.href = s.url; a.textContent = s.name;
-    if (s.about) a.title = s.about;
-    nav.appendChild(a);
-    const k = 7 * i;
-    els.push({ a, cx: .2 + .6 * b(k), cy: .2 + .55 * b(k + 1), ax: .06 + .1 * b(k + 2), ay: .05 + .08 * b(k + 3),
-      mx: 1 + (H.charCodeAt(k % 64) % 2), my: 1 + (H.charCodeAt((k + 1) % 64) % 3), p: b(k + 4) * 6.283, q: b(k + 5) * 6.283 });
-  });
-  return theta => {
-    const W = innerWidth, Hh = innerHeight;
-    for (const d of els) {
-      const th = theta;
-      const w = d.a.offsetWidth, h = d.a.offsetHeight;
-      let x = (d.cx + d.ax * Math.sin(d.mx * th + d.p)) * W - w / 2;
-      let y = (d.cy + d.ay * Math.cos(d.my * th + d.q)) * Hh - h / 2;
-      x = Math.max(8, Math.min(W - w - 8, x));
-      y = Math.max(8, Math.min(Hh - h - 96, y));
-      d.a.style.transform = `translate3d(${x.toFixed(1)}px,${y.toFixed(1)}px,0)`;
-    }
-  };
-}
-
 // ---- main ----
-let state;
+let state, missing = false;
 try { state = await getState(); }
 catch (e) {
-  $("#mark").textContent = mode === "view" ? "this visit does not exist." : "";
-  // still show something: a quiet random field
-  state = { n: 1, hash: crypto.getRandomValues(new Uint8Array(32)).reduce((s, b) => s + b.toString(16).padStart(2, "0"), ""), epoch: 0, when: "" };
-  state.epoch_seed = state.hash;
+  missing = true;
+  const hx = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, "0")).join("");
+  state = { n: 1, hash: hx, epoch_seed: hx, when: "", sites: [] };
 }
+// Each visit is drawn by the engine it was made with, forever.
+const E = await import(state.engine === 1 ? "/static/art-v1.js" : "/static/art.js");
+const { LOOP, genome, createArt, renderCard, fmtHash } = E;
+const css = E.css || ((c, a = 1) => `rgba(${c.map(x => Math.round(x * 255)).join(",")},${a})`);
+const placeDoors = E.placeDoors || (() => []);
 const genes = genome(state);
 const theta0 = (parseInt(state.hash.slice(-6), 16) / 0xffffff) * Math.PI * 2;
+const root = document.documentElement.style;
+const ink = genes.ink || [1, 1, 1], ground = genes.bg || [0, 0, 0];
+root.setProperty("--ink", css(ink));
+root.setProperty("--ground", css(ground));
+document.querySelector('meta[name="theme-color"]').content = css(ground);
 
 if (mode === "render") {
   // Server-side preview images: one frame, handed back as a data URL.
@@ -177,37 +151,42 @@ function start() {
   const canvas = $("#art");
   let art = null;
   try { art = createArt(canvas); } catch (e) { art = null; }
-  if (art) art.set(genes);
-  else {
-    // No WebGL: a still gradient in the same palette.
-    const c = t => "rgb(" + genes.uPa.map((a, i) => Math.round(255 * Math.min(1, Math.max(0, a + genes.uPb[i] * Math.cos(6.283 * (genes.uPc[i] * t + genes.uPd[i])))))).join(",") + ")";
-    canvas.outerHTML = `<div class="fallback" style="background:radial-gradient(circle at 40% 40%,${c(0)},${c(.33)} 45%,${c(.66)})"></div>`;
-  }
 
   // Marks
-  const mark = $("#mark");
-  mark.innerHTML = `<b>no. ${state.n.toLocaleString("en-US")}</b>` + (mode === "view"
-    ? `<span class="once">someone's, on ${state.when.slice(0, 10)}.</span>`
-    : `<span class="once">yours alone. it won't come again.</span>`);
+  $("#mark").innerHTML = missing ? "<b>this visit does not exist.</b>"
+    : `<b>no. ${state.n.toLocaleString("en-US")}</b>` + (mode === "view"
+      ? `<span class="once">someone's, on ${state.when.slice(0, 10)}.</span>`
+      : `<span class="once">yours alone. it won't come again.</span>`);
   $("#fp").textContent = fmtHash(state.hash);
-  if (mode === "view") {
-    const acts = $("#acts");
-    acts.innerHTML = `<a href="/">yours</a>` + acts.innerHTML;
-  }
+  if (mode === "view") $("#acts").insertAdjacentHTML("afterbegin", `<a class="btn" href="/">yours</a>`);
   $("#acts").hidden = false;
 
-  let move = null;
-  fetch("/static/sites.json").then(r => r.json()).then(s => { move = doors(s, state.hash, theta0); }).catch(() => {});
+  // Doors: same placement the shader uses, so each link sits in its room.
+  const nav = $("#doors");
+  let doors = [];
+  function layout() {
+    doors = placeDoors(state, state.sites || [], innerWidth, innerHeight);
+    nav.replaceChildren(...doors.map(d => {
+      const a = document.createElement("a");
+      a.className = "door"; a.href = d.url;
+      a.style.width = a.style.height = `${d.rPx * 2}px`;
+      a.style.transform = `translate(${(d.x - d.rPx).toFixed(1)}px,${(d.y - d.rPx).toFixed(1)}px)`;
+      const s = document.createElement("span"); s.textContent = d.name; a.appendChild(s);
+      return a;
+    }));
+    if (art) art.set(genes, doors);
+  }
 
   // Resolution adapts to the device so the motion stays fluid.
   const dprMax = Math.min(devicePixelRatio || 1, 2);
-  let scale = innerWidth < 700 ? 0.55 : 0.75, frames = 0, acc = 0, last = performance.now();
+  let scale = innerWidth < 700 ? 0.6 : 0.8, frames = 0, acc = 0, last = performance.now();
   function size() {
     if (!art) return;
     const w = Math.max(2, Math.round(innerWidth * dprMax * scale)), h = Math.max(2, Math.round(innerHeight * dprMax * scale));
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   }
-  addEventListener("resize", size); size();
+  addEventListener("resize", () => { size(); layout(); });
+  size(); layout();
 
   // Reduced motion: the same loop, four times slower.
   const loop = reduce ? LOOP * 4 : LOOP;
@@ -218,19 +197,15 @@ function start() {
   });
   function theta(now) { return (((now / 1000 - t0) % loop) / loop) * Math.PI * 2; }
   function tick(now) {
-    if (!running) return;
-    const th = theta(now);
-    if (art) {
-      art.draw(th);
-      const dt = now - last; last = now; acc += dt; frames++;
-      if (frames === 40) {
-        const avg = acc / frames;
-        if (avg > 24 && scale > 0.3) { scale *= 0.85; size(); }
-        else if (avg < 13 && scale < 1) { scale = Math.min(1, scale * 1.1); size(); }
-        frames = 0; acc = 0;
-      }
+    if (!running || !art) return;
+    art.draw(theta(now), canvas.width / innerWidth);
+    const dt = now - last; last = now; acc += dt; frames++;
+    if (frames === 40) {
+      const avg = acc / frames;
+      if (avg > 24 && scale > 0.3) { scale *= 0.85; size(); }
+      else if (avg < 13 && scale < 1) { scale = Math.min(1, scale * 1.1); size(); }
+      frames = 0; acc = 0;
     }
-    if (move) move(th);
     requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
@@ -246,11 +221,10 @@ function start() {
 
   // ---- keep / share ----
   const url = `${location.origin}/v/${state.id}`;
-  const portrait = innerHeight >= innerWidth;
   let blob = null;
   function card() {
     if (blob) return Promise.resolve(blob);
-    const [w, h] = portrait ? [1080, 1350] : [1600, 1000];
+    const [w, h] = innerHeight >= innerWidth ? [1080, 1350] : [1600, 1000];
     const c = renderCard(state, genes, theta(performance.now()), w, h);
     return new Promise(res => c.toBlob(b => { blob = b; res(b); }, "image/png"));
   }

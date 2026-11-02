@@ -17,6 +17,7 @@ but exactly when is up to chance.
 import asyncio
 import base64
 import hashlib
+import json
 import os
 import re
 import secrets
@@ -59,7 +60,24 @@ CREATE TABLE IF NOT EXISTS visits (
 );
 CREATE INDEX IF NOT EXISTS visits_id ON visits (substring(hash from 1 for 8));
 CREATE INDEX IF NOT EXISTS visits_lz ON visits (lz);
+-- The doors that existed at that visit, and which art engine drew it.
+-- Rows from before these columns existed were engine 1 with one door.
+ALTER TABLE visits ADD COLUMN IF NOT EXISTS sites jsonb;
+ALTER TABLE visits ADD COLUMN IF NOT EXISTS engine int NOT NULL DEFAULT 1;
 """
+ENGINE = 2
+FIRST_SITES = [{"name": "not alone", "url": "https://notalone.sepand.dev"}]
+
+
+def current_sites() -> list[dict]:
+    """The doors right now, as stored with each visit (name + url only)."""
+    raw = json.loads((STATIC / "sites.json").read_text())
+    return [{"name": str(s["name"]), "url": str(s["url"])} for s in raw]
+
+
+def sites_digest(sites: list[dict]) -> bytes:
+    canon = json.dumps(sites, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(canon.encode()).digest()
 
 
 @app.on_event("startup")
@@ -80,11 +98,16 @@ def leading_zero_bits(h: bytes) -> int:
     return n
 
 
+COLS = "n, hash, lz, epoch, epoch_seed, created_at, sites, engine"
+
+
 def public(row) -> dict:
-    n, h, lz, epoch, seed, at = row
+    n, h, lz, epoch, seed, at, sites, engine = row
+    sites = sites if sites is not None else FIRST_SITES
     return {
         "n": n, "hash": h.hex(), "id": h[:8].hex(), "lz": lz, "epoch": epoch,
         "epoch_seed": seed.hex(), "when": at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "sites": sites, "sites_digest": sites_digest(sites).hex(), "engine": engine,
     }
 
 
@@ -95,15 +118,18 @@ def mint() -> dict:
         rec = c.execute("SELECT COALESCE(MAX(lz), -1) FROM visits").fetchone()[0]
         n, prev, epoch, seed = (head[0] + 1, head[1], head[2], head[3]) if head else (1, GENESIS, 0, GENESIS)
         nonce = secrets.token_bytes(32)
-        h = hashlib.sha256(b"sepand.dev/v1" + prev + n.to_bytes(8, "big") + nonce
-                           + time.time_ns().to_bytes(8, "big")).digest()
+        sites = current_sites()
+        # The doors are part of what gets sealed: a new site changes every
+        # hash after it.
+        h = hashlib.sha256(b"sepand.dev/v2" + prev + n.to_bytes(8, "big") + nonce
+                           + time.time_ns().to_bytes(8, "big") + sites_digest(sites)).digest()
         lz = leading_zero_bits(h)
         if lz > rec:  # a new rarity record: the design turns over
             epoch, seed = epoch + 1, h
         row = c.execute(
-            "INSERT INTO visits (n, hash, prev, nonce, lz, epoch, epoch_seed) VALUES (%s,%s,%s,%s,%s,%s,%s) "
-            "RETURNING n, hash, lz, epoch, epoch_seed, created_at",
-            (n, h, prev, nonce, lz, epoch, seed)).fetchone()
+            "INSERT INTO visits (n, hash, prev, nonce, lz, epoch, epoch_seed, sites, engine) "
+            f"VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING {COLS}",
+            (n, h, prev, nonce, lz, epoch, seed, json.dumps(sites), ENGINE)).fetchone()
     return public(row) | {"record": max(rec, lz)}
 
 
@@ -112,8 +138,8 @@ def lookup(vid: str) -> dict:
         raise HTTPException(404)
     with pool.connection() as c:
         row = c.execute(
-            "SELECT n, hash, lz, epoch, epoch_seed, created_at FROM visits "
-            "WHERE substring(hash from 1 for 8) = %s", (bytes.fromhex(vid),)).fetchone()
+            f"SELECT {COLS} FROM visits WHERE substring(hash from 1 for 8) = %s",
+            (bytes.fromhex(vid),)).fetchone()
     if not row:
         raise HTTPException(404)
     return public(row)
