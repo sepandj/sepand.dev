@@ -65,7 +65,7 @@ CREATE INDEX IF NOT EXISTS visits_lz ON visits (lz);
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS sites jsonb;
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS engine int NOT NULL DEFAULT 1;
 """
-ENGINE = 6
+ENGINE = 8
 FIRST_SITES = [{"name": "not alone", "url": "https://notalone.sepand.dev"}]
 
 
@@ -229,21 +229,24 @@ def visit(request: Request):
 
 
 # ---- the whole history, compactly: what engine 4 draws ----
-# Per visit: the first 8 bytes of its hash and its epoch number. The past never
-# changes, so this only ever grows; one process serves it from memory.
-_chain = {"n": 0, "h": bytearray(), "e": bytearray(), "seeds": {}}
+# Per visit: the first 16 bytes of its hash (sent as "h" = bytes 0-7, which
+# every engine uses, and "x" = bytes 8-15, which engine 8 adds for colour) and
+# its epoch number. The past never changes, so this only ever grows; one
+# process serves it from memory.
+_chain = {"n": 0, "h": bytearray(), "x": bytearray(), "e": bytearray(), "seeds": {}}
 
 
 def _chain_upto(n: int) -> None:
     if n <= _chain["n"]:
         return
     with pool.connection() as c:
-        rows = c.execute("SELECT n, substring(hash from 1 for 8), epoch, epoch_seed FROM visits "
+        rows = c.execute("SELECT n, substring(hash from 1 for 16), epoch, epoch_seed FROM visits "
                          "WHERE n > %s AND n <= %s ORDER BY n", (_chain["n"], n)).fetchall()
-    for vn, h8, ep, seed in rows:
+    for vn, h16, ep, seed in rows:
         if vn != _chain["n"] + 1:
             break
-        _chain["h"] += bytes(h8)
+        _chain["h"] += bytes(h16)[:8]
+        _chain["x"] += bytes(h16)[8:16]
         _chain["e"] += int(ep).to_bytes(2, "big")
         _chain["seeds"].setdefault(ep, bytes(seed).hex())
         _chain["n"] = vn
@@ -260,6 +263,7 @@ def chain(n: int):
         json.dumps({
             "n": n,
             "h": base64.b64encode(bytes(_chain["h"][: n * 8])).decode(),
+            "x": base64.b64encode(bytes(_chain["x"][: n * 8])).decode(),
             "e": base64.b64encode(bytes(_chain["e"][: n * 2])).decode(),
             "seeds": {str(k): v for k, v in _chain["seeds"].items() if k <= int.from_bytes(_chain["e"][n * 2 - 2: n * 2], "big")},
         }),
@@ -293,8 +297,9 @@ async def _render_png(vid: str, w: int, h: int) -> bytes:
             _browser = await pw.chromium.launch(args=["--use-angle=swiftshader", "--enable-unsafe-swiftshader"])
         pg = await _browser.new_page(viewport={"width": 400, "height": 300})
         try:
-            await pg.goto(f"{SELF}/render/{vid}?w={w}&h={h}", wait_until="load", timeout=20000)
-            await pg.wait_for_function("window.__card", timeout=20000)
+            # Engine 7 runs the whole pour in software here; give it time.
+            await pg.goto(f"{SELF}/render/{vid}?w={w}&h={h}", wait_until="load", timeout=30000)
+            await pg.wait_for_function("window.__card", timeout=280000, polling=1000)
             data = await pg.evaluate("window.__card")
         finally:
             await pg.close()

@@ -30,6 +30,8 @@
   .door span{transition:letter-spacing .5s ease}
   .door:hover span,.door:focus-visible span{letter-spacing:.3em}
   .door:focus-visible{outline:1px solid var(--ink); outline-offset:4px}
+  .door.set-in{border-radius:8px; color:transparent; transform-origin:center}
+  .door.set-in:focus-visible{outline-offset:2px}
 
   .bar{position:fixed; left:0; right:0; bottom:0; display:flex; align-items:flex-end; justify-content:space-between;
     gap:12px; padding:16px max(16px,env(safe-area-inset-right)) max(14px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));
@@ -89,9 +91,9 @@
   </button>
   <div class="note-in">
     <p>the moment you arrived, this page was made for you.</p>
-    <p>every visit ever made here is one thread. they are drawn oldest first, and yours comes last, the bright one. its path comes from a fingerprint sealed to your visit and chained to every visit before it. no one else will be given it, and you won't be given it again.</p>
-    <p>where a thread crosses the ones before it, its fingerprint may close the space between a few of those crossings with colour. so the weave only ever grows. once in a long while a rare visit arrives and opens a new era, with its own currents and colours, and every thread after it is different.</p>
-    <p>the circles the threads curl around are doors to the other things i make. each new door bends every thread that comes after it.</p>
+    <p>every visit ever made here is a stream of oil. they are poured again, oldest first, and yours comes last, the one that shimmers. its colour, where it falls and how it runs all come from a fingerprint sealed to your visit and chained to every visit before it. any colour is as likely as any other, and once in a while a stream comes out as metal. no one else will be given yours, and you won't be given it again.</p>
+    <p>so the surface only ever fills. once in a long while a rare visit arrives and opens a new era, and the oil after it moves another way: tilting, swirling, combing, blooming, or lying still.</p>
+    <p>the words set into the surface are doors to the other things i make. each new one changes how everything after it flows.</p>
     <p>keep it, or share it. the link will always open this one.</p>
     <p class="sig">sepand</p>
     <p class="fp" id="fp"></p>
@@ -131,7 +133,7 @@ catch (e) {
   state = { n: 1, hash: hx, epoch_seed: hx, when: "", sites: [], engine: 3 };
 }
 // Each visit is drawn by the engine it was made with, forever.
-const E = await import({ 1: "/static/art-v1.js", 2: "/static/art-v2.js", 3: "/static/art-v3.js", 4: "/static/art-v4.js", 5: "/static/art-v5.js" }[state.engine] || "/static/art.js");
+const E = await import({ 1: "/static/art-v1.js", 2: "/static/art-v2.js", 3: "/static/art-v3.js", 4: "/static/art-v4.js", 5: "/static/art-v5.js", 6: "/static/art-v6.js", 7: "/static/art-v7.js" }[state.engine] || "/static/art.js");
 if (E.prepare) await E.prepare(state);   // engine 4 draws the whole history
 const { LOOP, genome, createArt, renderCard, fmtHash } = E;
 const css = E.css || ((c, a = 1) => `rgba(${c.map(x => Math.round(x * 255)).join(",")},${a})`);
@@ -164,8 +166,8 @@ function start() {
   // Marks
   $("#mark").innerHTML = missing ? "<b>this visit does not exist.</b>"
     : `<b>no. ${state.n.toLocaleString("en-US")}</b>` + (mode === "view"
-      ? `<span class="once">${E.prepare ? "the bright thread was someone's, " : "someone's, "}on ${state.when.slice(0, 10)}.</span>`
-      : `<span class="once">${E.prepare ? "the bright thread is yours. it won't come again." : "yours alone. it won't come again."}</span>`);
+      ? `<span class="once">${E.WORDS ? E.WORDS.theirs : E.prepare ? "the bright thread was someone's, " : "someone's, "}on ${state.when.slice(0, 10)}.</span>`
+      : `<span class="once">${E.WORDS ? E.WORDS.yours : E.prepare ? "the bright thread is yours. it won't come again." : "yours alone. it won't come again."}</span>`);
   $("#fp").textContent = fmtHash(state.hash);
   if (mode === "view") $("#acts").insertAdjacentHTML("afterbegin", `<a class="btn" href="/">yours</a>`);
   $("#acts").hidden = false;
@@ -178,9 +180,17 @@ function start() {
     nav.replaceChildren(...doors.map(d => {
       const a = document.createElement("a");
       a.className = "door"; a.href = d.url;
-      a.style.width = a.style.height = `${d.rPx * 2}px`;
-      a.style.transform = `translate(${(d.x - d.rPx).toFixed(1)}px,${(d.y - d.rPx).toFixed(1)}px)`;
       const s = document.createElement("span"); s.textContent = d.name; a.appendChild(s);
+      if (d.w) {
+        // The name is drawn in the art itself; the link lies invisibly over it.
+        a.classList.add("set-in"); a.setAttribute("aria-label", d.name);
+        const bw = d.w + 24, bh = d.h + 16;
+        a.style.width = `${bw}px`; a.style.height = `${bh}px`;
+        a.style.transform = `translate(${(d.x - bw / 2).toFixed(1)}px,${(d.y - bh / 2).toFixed(1)}px) rotate(${d.angle.toFixed(3)}rad)`;
+      } else {
+        a.style.width = a.style.height = `${d.rPx * 2}px`;
+        a.style.transform = `translate(${(d.x - d.rPx).toFixed(1)}px,${(d.y - d.rPx).toFixed(1)}px)`;
+      }
       return a;
     }));
     if (art) art.set(genes, doors, n => { if (no) no.textContent = `no. ${n.toLocaleString("en-US")}`; });
@@ -251,7 +261,12 @@ function start() {
   function card() {
     if (blob) return Promise.resolve(blob);
     let c;
-    if (E.prepare && E.fixedScale && state.engine >= 5) {
+    if (art && art.snapshot) {
+      // The very frame on screen, once the pour has finished.
+      if (!art.done) art.runToEnd();
+      art.draw(theta(performance.now()));
+      c = E.caption(art.snapshot(), state, genes, doors, canvas.width / cw());
+    } else if (E.prepare && E.fixedScale && state.engine >= 5) {
       // Exactly what this screen shows, at print resolution.
       const k = Math.max(2, Math.min(3, 3000 / Math.max(cw(), ch())));
       c = renderCard(state, genes, theta(performance.now()), Math.round(cw() * k), Math.round(ch() * k), k);
@@ -262,7 +277,13 @@ function start() {
     return new Promise(res => c.toBlob(b => { blob = b; res(b); }, "image/png"));
   }
   const name = `sepand-dev-${state.n}.png`;
-  $("#save").disabled = $("#share").disabled = !state.id;
+  // Keep and share wake up once the pour has finished, so the frame you
+  // keep is the finished one and nothing has to be rushed.
+  const ready = () => !!state.id && (!art || !("done" in art) || art.done);
+  $("#save").disabled = $("#share").disabled = !ready();
+  if (!ready() && state.id) {
+    const wait = setInterval(() => { if (ready()) { $("#save").disabled = $("#share").disabled = false; clearInterval(wait); } }, 300);
+  }
   $("#save").addEventListener("click", async () => {
     const b = await card(), a = document.createElement("a");
     a.href = URL.createObjectURL(b); a.download = name; document.body.appendChild(a); a.click(); a.remove();
