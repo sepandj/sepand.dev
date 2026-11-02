@@ -13,6 +13,7 @@
     color-scheme:dark;
   }
   *{box-sizing:border-box}
+  [hidden]{display:none !important}
   html,body{margin:0; height:100%; background:#000; color:var(--fg); overflow:hidden;
     font-family:var(--mono); -webkit-font-smoothing:antialiased; -webkit-tap-highlight-color:transparent}
   canvas#art{position:fixed; inset:0; width:100vw; height:100vh; height:100dvh; display:block}
@@ -35,8 +36,7 @@
     color:#fff; pointer-events:none; text-shadow:0 0 2px rgba(0,0,0,.6), 0 0 10px rgba(0,0,0,.5)}
   .mark{font-size:11px; letter-spacing:.12em; line-height:1.7; min-width:0}
   .mark b{font-weight:600; letter-spacing:.2em}
-  .mark .h{display:block; opacity:.85; max-width:40ch}
-  .mark .h .full{display:inline} .mark .h .short{display:none}
+  .mark .once{display:block; opacity:.85; letter-spacing:.08em}
   .acts{display:flex; gap:8px; pointer-events:auto; flex-shrink:0}
   .acts button,.acts a{font:inherit; font-size:12px; letter-spacing:.14em; color:#fff; background:transparent;
     border:1px solid rgba(255,255,255,.7); border-radius:999px; min-height:44px; padding:0 16px; cursor:pointer;
@@ -47,8 +47,27 @@
     font-size:11px; letter-spacing:.12em; color:#fff; background:rgba(0,0,0,.45); padding:8px 14px; border-radius:999px;
     opacity:0; transition:opacity .4s; pointer-events:none}
   .toast.on{opacity:.9}
-  @media (max-width:620px){ .mark .h .full{display:none} .mark .h .short{display:inline} }
-  body.render .doors, body.render .bar, body.render .toast{display:none}
+
+  /* the "!" */
+  .bang{position:fixed; z-index:3; top:max(14px,env(safe-area-inset-top)); right:max(14px,env(safe-area-inset-right));
+    width:44px; height:44px; border-radius:50%; border:1px solid rgba(255,255,255,.7); background:rgba(0,0,0,.28);
+    -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); color:#fff; font:600 17px/1 var(--mono);
+    cursor:pointer; display:grid; place-items:center; padding:0}
+  .bang:focus-visible,.acts button:focus-visible,.acts a:focus-visible{outline:1px solid #fff; outline-offset:3px}
+
+  .note{position:fixed; inset:0; z-index:4; display:grid; place-items:center; padding:24px;
+    background:rgba(0,0,0,.45); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+    opacity:0; transition:opacity .35s ease}
+  .note.on{opacity:1}
+  .note-in{max-width:30rem; color:#fff; font-size:14px; line-height:1.85; letter-spacing:.02em}
+  .note-in p{margin:0 0 1.1em}
+  .note-in .fp{margin-top:1.6em; font-size:11px; letter-spacing:.1em; opacity:.7; word-spacing:.2em}
+  .note-in .sig{opacity:.7}
+  .note .x{position:absolute; top:max(14px,env(safe-area-inset-top)); right:max(14px,env(safe-area-inset-right));
+    width:44px; height:44px; border-radius:50%; border:1px solid rgba(255,255,255,.7); background:transparent;
+    color:#fff; cursor:pointer; display:grid; place-items:center; padding:0}
+  .note .x svg{width:14px; height:14px}
+  body.render .doors, body.render .bar, body.render .toast, body.render .bang{display:none}
 </style>
 </head>
 <body>
@@ -62,6 +81,21 @@
   </div>
 </div>
 <div class="toast" id="toast" role="status"></div>
+<button class="bang" id="bang" type="button" aria-label="what is this" aria-haspopup="dialog">!</button>
+<div class="note" id="note" role="dialog" aria-modal="true" aria-label="what is this" hidden>
+  <button class="x" id="noteX" type="button" aria-label="close">
+    <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 2l10 10M12 2L2 12"/></svg>
+  </button>
+  <div class="note-in">
+    <p>the moment you arrived, this page was made for you.</p>
+    <p>it grew from a fingerprint sealed to your visit and chained to every visit before it. no one else will be given this one, and you won't be given it again. come back and it will be something else.</p>
+    <p>every visit leaves the next one a little more intricate. once in a long while a rare one arrives, and everything after it changes.</p>
+    <p>keep it, or share it. the link will always open this one.</p>
+    <p>the words floating around are doors to the other things i make.</p>
+    <p class="sig">sepand</p>
+    <p class="fp" id="fp"></p>
+  </div>
+</div>
 
 <script type="module">
 import { LOOP, genome, createArt, renderCard, fmtHash } from "/static/art.js";
@@ -152,7 +186,10 @@ function start() {
 
   // Marks
   const mark = $("#mark");
-  mark.innerHTML = `<b>no. ${state.n.toLocaleString("en-US")}</b>${mode === "view" ? " · " + state.when : ""}<span class="h"><span class="full">${fmtHash(state.hash.slice(0, 32))}<br>${fmtHash(state.hash.slice(32))}</span><span class="short">${fmtHash(state.hash.slice(0, 16))} …</span></span>`;
+  mark.innerHTML = `<b>no. ${state.n.toLocaleString("en-US")}</b>` + (mode === "view"
+    ? `<span class="once">someone's, on ${state.when.slice(0, 10)}.</span>`
+    : `<span class="once">yours alone. it won't come again.</span>`);
+  $("#fp").textContent = fmtHash(state.hash);
   if (mode === "view") {
     const acts = $("#acts");
     acts.innerHTML = `<a href="/">yours</a>` + acts.innerHTML;
@@ -197,6 +234,15 @@ function start() {
     requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
+
+  // ---- the "!" ----
+  const note = $("#note"), bang = $("#bang");
+  function openNote() { note.hidden = false; requestAnimationFrame(() => note.classList.add("on")); $("#noteX").focus(); }
+  function closeNote() { note.classList.remove("on"); setTimeout(() => { note.hidden = true; }, 350); bang.focus(); }
+  bang.addEventListener("click", openNote);
+  $("#noteX").addEventListener("click", closeNote);
+  note.addEventListener("click", e => { if (e.target === note) closeNote(); });
+  addEventListener("keydown", e => { if (e.key === "Escape" && !note.hidden) closeNote(); });
 
   // ---- keep / share ----
   const url = `${location.origin}/v/${state.id}`;
