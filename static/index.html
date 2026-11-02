@@ -5,7 +5,6 @@
 <title>sepand.dev</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="sepand.dev">
-<meta name="theme-color" content="#e9e6df">
 <!--OG-->
 <style>
   /* Colours come from the visit (see genome): --ink for type and lines,
@@ -16,7 +15,7 @@
   }
   *{box-sizing:border-box}
   [hidden]{display:none !important}
-  html,body{margin:0; height:100%; background:var(--ground); color:var(--ink); overflow:hidden;
+  html,body{margin:0; height:100%; background:var(--ground); color:var(--ink); overflow:hidden; transition:background-color .6s ease;
     font-family:var(--mono); -webkit-font-smoothing:antialiased; -webkit-tap-highlight-color:transparent}
   canvas#art{position:fixed; inset:0; width:100vw; height:100vh; height:100dvh; display:block; background:var(--ground)}
 
@@ -62,6 +61,10 @@
   .note-in .sig{opacity:.6}
   .note .x{position:absolute; top:max(14px,env(safe-area-inset-top)); right:max(14px,env(safe-area-inset-right)); width:44px; padding:0}
   .note .x svg{width:14px; height:14px}
+  /* Nothing shows until the first frame is drawn in the visit's own colours,
+     then it all fades in together. */
+  #art,.doors,.bar,.bang{opacity:0; transition:opacity 1.4s ease}
+  body.ready #art,body.ready .doors,body.ready .bar,body.ready .bang{opacity:1}
   body.render .doors, body.render .bar, body.render .toast, body.render .bang{display:none}
 </style>
 </head>
@@ -125,7 +128,7 @@ catch (e) {
   state = { n: 1, hash: hx, epoch_seed: hx, when: "", sites: [] };
 }
 // Each visit is drawn by the engine it was made with, forever.
-const E = await import(state.engine === 1 ? "/static/art-v1.js" : "/static/art.js");
+const E = await import({ 1: "/static/art-v1.js", 2: "/static/art-v2.js" }[state.engine] || "/static/art.js");
 const { LOOP, genome, createArt, renderCard, fmtHash } = E;
 const css = E.css || ((c, a = 1) => `rgba(${c.map(x => Math.round(x * 255)).join(",")},${a})`);
 const placeDoors = E.placeDoors || (() => []);
@@ -135,7 +138,8 @@ const root = document.documentElement.style;
 const ink = genes.ink || [1, 1, 1], ground = genes.bg || [0, 0, 0];
 root.setProperty("--ink", css(ink));
 root.setProperty("--ground", css(ground));
-document.querySelector('meta[name="theme-color"]').content = css(ground);
+const tc = document.querySelector('meta[name="theme-color"]');
+if (tc) tc.content = css(ground);
 
 if (mode === "render") {
   // Server-side preview images: one frame, handed back as a data URL.
@@ -177,15 +181,17 @@ function start() {
     if (art) art.set(genes, doors);
   }
 
-  // Resolution adapts to the device so the motion stays fluid.
+  // Resolution adapts to the device so the motion stays fluid. It is only
+  // tuned while the page fades in, then it stays put (a resize clears the
+  // canvas, which is what made the start flicker).
   const dprMax = Math.min(devicePixelRatio || 1, 2);
-  let scale = innerWidth < 700 ? 0.6 : 0.8, frames = 0, acc = 0, last = performance.now();
+  let scale = innerWidth < 700 ? 0.6 : 0.8, frames = 0, acc = 0, last = performance.now(), tunes = 0, settled = false;
   function size() {
     if (!art) return;
     const w = Math.max(2, Math.round(innerWidth * dprMax * scale)), h = Math.max(2, Math.round(innerHeight * dprMax * scale));
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   }
-  addEventListener("resize", () => { size(); layout(); });
+  addEventListener("resize", () => { size(); layout(); if (art && running) art.draw(theta(performance.now()), canvas.width / innerWidth); });
   size(); layout();
 
   // Reduced motion: the same loop, four times slower.
@@ -196,19 +202,27 @@ function start() {
     running = !document.hidden; if (running) { last = performance.now(); requestAnimationFrame(tick); }
   });
   function theta(now) { return (((now / 1000 - t0) % loop) / loop) * Math.PI * 2; }
+  let shown = false;
   function tick(now) {
     if (!running || !art) return;
-    art.draw(theta(now), canvas.width / innerWidth);
-    const dt = now - last; last = now; acc += dt; frames++;
-    if (frames === 40) {
-      const avg = acc / frames;
-      if (avg > 24 && scale > 0.3) { scale *= 0.85; size(); }
-      else if (avg < 13 && scale < 1) { scale = Math.min(1, scale * 1.1); size(); }
-      frames = 0; acc = 0;
+    const dt = now - last; last = now; frames++;
+    if (!settled && frames > 6) {             // skip the slow first frames
+      acc += dt;
+      if (frames === 6 + 24) {
+        const avg = acc / 24, before = scale;
+        if (avg > 24 && scale > 0.35) scale *= 0.8;
+        else if (avg < 12 && scale < 1) scale = Math.min(1, scale * 1.15);
+        if (scale !== before) size();         // redrawn just below, same frame
+        frames = 6; acc = 0;
+        if (++tunes >= 3 || scale === before) settled = true;
+      }
     }
+    art.draw(theta(now), canvas.width / innerWidth);
+    if (!shown) { shown = true; requestAnimationFrame(() => document.body.classList.add("ready")); }
     requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
+  if (!art) document.body.classList.add("ready");
 
   // ---- the "!" ----
   const note = $("#note"), bang = $("#bang");

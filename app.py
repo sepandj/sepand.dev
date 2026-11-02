@@ -65,7 +65,7 @@ CREATE INDEX IF NOT EXISTS visits_lz ON visits (lz);
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS sites jsonb;
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS engine int NOT NULL DEFAULT 1;
 """
-ENGINE = 2
+ENGINE = 3
 FIRST_SITES = [{"name": "not alone", "url": "https://notalone.sepand.dev"}]
 
 
@@ -170,8 +170,41 @@ def client_ip(r: Request) -> str:
 INDEX = (STATIC / "index.html").read_text()
 
 
-def page(og: str = "") -> HTMLResponse:
-    return HTMLResponse(INDEX.replace("<!--OG-->", og), headers={"Cache-Control": "no-store"})
+def _hsl(h: float, s: float, l: float) -> tuple[int, int, int]:
+    h %= 1.0
+    def f(n):
+        k = (n + h * 12) % 12
+        a = s * min(l, 1 - l)
+        return l - a * max(-1, min(k - 3, 9 - k, 1))
+    return tuple(round(f(n) * 255) for n in (0, 8, 4))
+
+
+def colours(epoch_seed: bytes | None, engine: int) -> str:
+    """The paper and ink of a piece, so the very first paint is already the
+    right colour (no flash). Mirrors genome() in static/art.js; palette bytes
+    0..7 come from the epoch seed alone."""
+    if engine == 1 or not epoch_seed:
+        bg, ink = (0, 0, 0), (255, 255, 255)
+    else:
+        u = lambda i: epoch_seed[i] / 255
+        hue, dark, bgs = u(3), epoch_seed[4] % 3 == 0, 0.06 + u(5) * 0.1
+        bg = _hsl(hue + 0.5, bgs, 0.075 + u(6) * 0.04) if dark else _hsl(hue + 0.08, bgs, 0.9 + u(6) * 0.05)
+        ink = _hsl(hue, 0.14 + u(2) * 0.22, 0.72 if dark else 0.3)
+    rgb = lambda c: f"rgb({c[0]},{c[1]},{c[2]})"
+    return (f'<style>:root{{--ground:{rgb(bg)};--ink:{rgb(ink)}}}</style>'
+            f'<meta name="theme-color" content="{rgb(bg)}">')
+
+
+def page(og: str = "", seed: bytes | None = None, engine: int = ENGINE) -> HTMLResponse:
+    return HTMLResponse(INDEX.replace("<!--OG-->", og + colours(seed, engine)),
+                        headers={"Cache-Control": "no-store"})
+
+
+def head_seed() -> bytes | None:
+    """Epoch seed the next visit will most likely share."""
+    with pool.connection() as c:
+        row = c.execute("SELECT epoch_seed FROM visits ORDER BY n DESC LIMIT 1").fetchone()
+    return bytes(row[0]) if row else None
 
 
 def og_tags(title: str, url: str, image: str) -> str:
@@ -183,7 +216,7 @@ def og_tags(title: str, url: str, image: str) -> str:
 
 @app.get("/")
 def index():
-    return page(og_tags("sepand.dev", PUBLIC + "/", PUBLIC + "/og.png"))
+    return page(og_tags("sepand.dev", PUBLIC + "/", PUBLIC + "/og.png"), head_seed())
 
 
 @app.post("/api/visit")
@@ -202,8 +235,8 @@ def get_visit(vid: str):
 
 @app.get("/render/{vid}")
 def render_page(vid: str):
-    lookup(vid)
-    return page()
+    v = lookup(vid)
+    return page("", bytes.fromhex(v["epoch_seed"]), v["engine"])
 
 
 # ---- preview images, drawn by the same art code in headless Chromium ----
@@ -249,7 +282,8 @@ async def shared_png(vid: str):
 @app.get("/v/{vid}")
 def shared(vid: str):
     v = lookup(vid)
-    return page(og_tags(f"sepand.dev · no. {v['n']:,}", f"{PUBLIC}/v/{vid}", f"{PUBLIC}/v/{vid}.png"))
+    return page(og_tags(f"sepand.dev · no. {v['n']:,}", f"{PUBLIC}/v/{vid}", f"{PUBLIC}/v/{vid}.png"),
+                bytes.fromhex(v["epoch_seed"]), v["engine"])
 
 
 @app.get("/og.png")

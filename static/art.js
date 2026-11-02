@@ -11,7 +11,7 @@
 // Motion only ever uses whole-number multiples of one loop angle, so the piece
 // repeats exactly every LOOP seconds and never drifts.
 
-export const LOOP = 24; // seconds
+export const LOOP = 90; // seconds
 export const MAX_SITES = 8;
 
 const VERT = `attribute vec2 a; void main(){ gl_Position = vec4(a,0.,1.); }`;
@@ -37,6 +37,7 @@ uniform vec4 uW2;             // second line family weights
 uniform float uLinesA, uLinesB, uWidthA, uWidthB, uAlphaA, uAlphaB, uHair;
 uniform vec3 uBg, uBg2, uInk1, uInk2, uInk3;
 uniform float uGrain;
+uniform float uMo;            // how far anything moves (small: it breathes)
 uniform vec4 uSite[${MAX_SITES}];   // xy centre (uv), z radius (uv), w swirl
 uniform float uSiteN;
 
@@ -74,13 +75,13 @@ void main(){
     float r = length(d);
     float f = exp(-r * r / (s.z * s.z * 7.0));
     float k = harm(h1(float(i) * 3.3 + uH.y * 7.0));
-    q = s.xy + rot(d, s.w * f * (1.0 + 0.3 * sin(k * uTh + float(i))));
+    q = s.xy + rot(d, s.w * f * (1.0 + 0.25 * uMo * sin(k * uTh + float(i))));
     float ru = length(uv - s.xy) / s.z;
     calm = max(calm, 1.0 - smoothstep(0.9, 1.0, ru));
     ring = max(ring, iso(ru, 1.2) * (1.0 - smoothstep(1.0, 1.1, ru)) * smoothstep(0.85, 0.95, ru));
   }
 
-  vec2 p = rot(q * uZoom, uTwist * sin(uTh + uG.x * TAU)) - uOff;
+  vec2 p = rot(q * uZoom, uTwist * uMo * sin(uTh + uG.x * TAU)) - uOff;
   vec2 raw = p;
   if (uSym > 1.5) {
     float a = atan(p.y, p.x), sec = TAU / uSym;
@@ -103,8 +104,9 @@ void main(){
     float f = mix(0.5, 2.6, r2) * (1.0 + fi * 0.1);
     float k = harm(r3);
     float amp = uAmp / (1.0 + fi * 0.45);
-    p += amp * vec2(sin(dot(p, d) * f + k * uTh + r4 * TAU),
-                    cos(dot(p, vec2(-d.y, d.x)) * f * 1.13 - k * uTh + r1 * TAU));
+    float sway = uMo * sin(k * uTh + r2 * TAU);
+    p += amp * vec2(sin(dot(p, d) * f + sway + r4 * TAU),
+                    cos(dot(p, vec2(-d.y, d.x)) * f * 1.13 - sway + r1 * TAU));
   }
 
   // Smooth scalar fields. Lines are drawn on their level sets.
@@ -116,7 +118,7 @@ void main(){
     vec2 b = vec2(h1(fj * 2.3 + uH.w * 37.0), h1(fj * 4.1 + uG.x * 71.0)) * 3.2 - 1.6;
     float m = harm(h1(fj * 6.7 + uH.x * 13.0));
     float rr = 0.15 + 0.35 * h1(fj * 8.3 + uG.y * 19.0);
-    vec2 c = b + rr * vec2(cos(m * uTh + fj), sin(m * uTh + fj));
+    vec2 c = b + rr * uMo * 0.5 * vec2(cos(m * uTh + fj), sin(m * uTh + fj));
     float dd = length(p - c);
     if (dd < d1) { d2 = d1; d1 = dd; } else if (dd < d2) { d2 = dd; }
   }
@@ -129,7 +131,7 @@ void main(){
     waves += length(p - c) * (0.6 + h1(fj + uH.z * 7.0)) * (mod(fj, 2.0) * 2.0 - 1.0);
   }
   waves /= max(uSrc, 1.0);
-  float flow = p.y + 0.4 * sin(p.x * 1.3 + uTh);
+  float flow = p.y + 0.4 * sin(p.x * 1.3 + uMo * sin(uTh));
   vec4 F = vec4(contour, cells, waves, flow);
 
   float a = dot(uW, F) / max(dot(uW, vec4(1.0)), 1e-3);
@@ -147,7 +149,7 @@ void main(){
   float hair = uHair * (1.0 - smoothstep(0.4 * uPx, 0.4 * uPx + 1.0, e / ef)) * (1.0 - smoothstep(0.12, 0.3, ef)) * 0.6;
 
   // Quiet ground: two close tones, barely moving.
-  float g = 0.5 + 0.5 * sin(dot(uv, vec2(0.8, 1.3)) + 0.3 * sin(uTh));
+  float g = 0.5 + 0.5 * sin(dot(uv, vec2(0.8, 1.3)) + 0.2 * uMo * sin(uTh));
   vec3 col = mix(uBg, uBg2, g * 0.7 + 0.15 * dot(uv, uv));
 
   float open = 1.0 - calm;
@@ -239,6 +241,7 @@ export function genome(state) {
     uHair: n > 64 && G[21] % 2 === 0 ? 1 : 0,
     uBg: bg, uBg2: bg2, uInk1: ink1, uInk2: ink2, uInk3: ink3,
     uGrain: dark ? 0.035 : 0.025,
+    uMo: 0.07 + u(G, 23) * 0.05,
   };
 }
 
