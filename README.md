@@ -26,7 +26,8 @@ oldest first, with this visit's thread last and brightest.
 - **Engines:** each visit records the engine that drew it and is always drawn
   by it: 1 = filled colour (`art-v1.js`), 2 and 3 = single line fields
   (`art-v2.js`, `art-v3.js`), 4 = the history of threads (`art-v4.js`),
-  5 = the history woven live, in ribbons with colour washes (`art.js`).
+  5 = ribbons with colour washes (`art-v5.js`), 6 = ribbons with shards of
+  colour closing the space between crossings, chosen by each visit's hash (`art.js`).
 
 Runs in the not-alone container as user `sepandidx` (`deploy/sepand-index.service`,
 port 8001), database `sepandidx`, behind Caddy (`deploy/Caddyfile.snippet`).

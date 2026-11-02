@@ -90,7 +90,7 @@
   <div class="note-in">
     <p>the moment you arrived, this page was made for you.</p>
     <p>every visit ever made here is one thread. they are drawn oldest first, and yours comes last, the bright one. its path comes from a fingerprint sealed to your visit and chained to every visit before it. no one else will be given it, and you won't be given it again.</p>
-    <p>so the weave only ever grows. once in a long while a rare visit arrives and opens a new era, with its own currents and colours, and every thread after it is different.</p>
+    <p>where a thread crosses the ones before it, its fingerprint may close the space between a few of those crossings with colour. so the weave only ever grows. once in a long while a rare visit arrives and opens a new era, with its own currents and colours, and every thread after it is different.</p>
     <p>the circles the threads curl around are doors to the other things i make. each new door bends every thread that comes after it.</p>
     <p>keep it, or share it. the link will always open this one.</p>
     <p class="sig">sepand</p>
@@ -131,7 +131,7 @@ catch (e) {
   state = { n: 1, hash: hx, epoch_seed: hx, when: "", sites: [], engine: 3 };
 }
 // Each visit is drawn by the engine it was made with, forever.
-const E = await import({ 1: "/static/art-v1.js", 2: "/static/art-v2.js", 3: "/static/art-v3.js", 4: "/static/art-v4.js" }[state.engine] || "/static/art.js");
+const E = await import({ 1: "/static/art-v1.js", 2: "/static/art-v2.js", 3: "/static/art-v3.js", 4: "/static/art-v4.js", 5: "/static/art-v5.js" }[state.engine] || "/static/art.js");
 if (E.prepare) await E.prepare(state);   // engine 4 draws the whole history
 const { LOOP, genome, createArt, renderCard, fmtHash } = E;
 const css = E.css || ((c, a = 1) => `rgba(${c.map(x => Math.round(x * 255)).join(",")},${a})`);
@@ -251,7 +251,7 @@ function start() {
   function card() {
     if (blob) return Promise.resolve(blob);
     let c;
-    if (E.prepare && E.fixedScale && state.engine !== 4) {
+    if (E.prepare && E.fixedScale && state.engine >= 5) {
       // Exactly what this screen shows, at print resolution.
       const k = Math.max(2, Math.min(3, 3000 / Math.max(cw(), ch())));
       c = renderCard(state, genes, theta(performance.now()), Math.round(cw() * k), Math.round(ch() * k), k);

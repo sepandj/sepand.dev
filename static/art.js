@@ -1,8 +1,10 @@
-// sepand.dev, engine 5: the history, woven while you watch.
+// sepand.dev, engine 6: the history, woven while you watch.
 //
 // Every visit that has ever happened is a ribbon of a few strands. Each one
 // starts where its own hash says, follows the currents of the era (epoch) it
-// was born in, curls around the doors, and leaves a wash of colour behind.
+// was born in, and curls around the doors. Where its main strand crosses
+// earlier ones, its hash may close the space between a few of those crossings
+// with a flat shard of colour, like glass between the leads of a window.
 // Eras differ in their currents, colours and stroke, so a rare visit that
 // opens a new era changes everything drawn after it. The page replays the
 // whole history, oldest first, then draws yours, slowly and brightest, last.
@@ -198,7 +200,7 @@ function strand(P, { i, s }) {
   const col = E.pal[(b[7] + s) % E.pal.length];
   const w = (0.6 + 0.9 * age) * (s ? 0.6 + R() * 0.6 : 1.3) * P.cssPx;
   const a = (0.42 + 0.5 * Math.pow(age, 0.8)) * P.crowd;
-  return { pts, E, b, col, w, a, style: E.style, wash: s === 0, washW: (14 + (b[3] % 32)) * P.cssPx };
+  return { pts, E, b, col, w, a, style: E.style, main: s === 0 };
 }
 
 // Yours: several starts from your own hash, the longest path, traced both ways.
@@ -221,7 +223,7 @@ function mineStrand(P) {
   }
   const col = E.pal[b[7] % E.pal.length];
   return { pts: best, E, b, col, w: (2.6 + Math.min(1.6, Math.log10(P.n + 1) * 0.5)) * P.cssPx, a: 1,
-           style: "solid", wash: true, washW: 36 * P.cssPx };
+           style: "solid", main: true };
 }
 
 // ---- strokes ---------------------------------------------------------------------
@@ -260,16 +262,6 @@ function drawRange(g, T, from, to, cssPx) {
   g.setLineDash([]);
 }
 
-// The soft colour a ribbon leaves behind.
-function drawWash(g, T, alpha) {
-  const p = T.pts;
-  if (p.length < 8) return;
-  g.strokeStyle = css(T.col, alpha); g.lineWidth = T.washW; g.lineCap = "round"; g.lineJoin = "round";
-  g.beginPath();
-  for (let k = 0; k < p.length; k += 6) k ? g.lineTo(p[k], p[k + 1]) : g.moveTo(p[k], p[k + 1]);
-  g.stroke();
-}
-
 // Door outlines: closed wavy lines that gain lobes and rings as the history grows.
 function drawDoors(g, P, genes, state) {
   const H = hexBytes(state.hash), lg = Math.log2(P.n + 1);
@@ -296,16 +288,97 @@ function drawDoors(g, P, genes, state) {
   }
 }
 
-// Washes are painted at a fraction of the resolution and scaled back up, which
-// softens their edges like wet colour on paper.
-const WS = 6;
-function washCanvas(w, h) {
-  const c = document.createElement("canvas"); c.width = Math.ceil(w / WS); c.height = Math.ceil(h / WS);
-  const g = c.getContext("2d"); g.setTransform(1 / WS, 0, 0, 1 / WS, 0, 0); return c;
-}
-function drawSoft(g, wash, w, h) { g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high"; g.drawImage(wash, 0, 0, w, h); }
+// ---- shards: colour closing the space between crossings ---------------------------
 
-function washAlpha(genes, P) { return (genes.dark ? 0.1 : 0.085) * Math.max(0.45, P.crowd); }
+// Main strands go into a grid so each new one can find where it crosses the
+// ones before it. Only main strands count, and they are always added in the
+// order of the history, so the live replay and the saved card agree exactly.
+function weave(P) { return { cs: 48 * P.cssPx, seg: new Map(), cross: new Map() }; }
+const cell = (cx, cy) => (cx + 4096) * 8192 + (cy + 4096);
+
+function crossings(Wv, T, id) {
+  const p = T.pts, n = p.length / 2, step = 3, cs = Wv.cs, found = [], mine = [];
+  for (let k = 0; k + step < n; k += step) {
+    const x1 = p[2 * k], y1 = p[2 * k + 1], x2 = p[2 * (k + step)], y2 = p[2 * (k + step) + 1];
+    const seg = { x1, y1, x2, y2, id };
+    mine.push(seg);
+    for (let cx = Math.floor(Math.min(x1, x2) / cs); cx <= Math.floor(Math.max(x1, x2) / cs); cx++)
+      for (let cy = Math.floor(Math.min(y1, y2) / cs); cy <= Math.floor(Math.max(y1, y2) / cs); cy++) {
+        const list = Wv.seg.get(cell(cx, cy));
+        if (!list) continue;
+        for (const o of list) {
+          if (o.id === id) continue;
+          const dx = x2 - x1, dy = y2 - y1, ex = o.x2 - o.x1, ey = o.y2 - o.y1, den = dx * ey - dy * ex;
+          if (Math.abs(den) < 1e-9) continue;
+          const t = ((o.x1 - x1) * ey - (o.y1 - y1) * ex) / den, v = ((o.x1 - x1) * dy - (o.y1 - y1) * dx) / den;
+          if (t < 0 || t > 1 || v < 0 || v > 1) continue;
+          const X = x1 + t * dx, Y = y1 + t * dy;
+          if (!found.some(q => Math.abs(q.x - X) + Math.abs(q.y - Y) < 3)) found.push({ x: X, y: Y });
+        }
+      }
+  }
+  for (const seg of mine)
+    for (let cx = Math.floor(Math.min(seg.x1, seg.x2) / cs); cx <= Math.floor(Math.max(seg.x1, seg.x2) / cs); cx++)
+      for (let cy = Math.floor(Math.min(seg.y1, seg.y2) / cs); cy <= Math.floor(Math.max(seg.y1, seg.y2) / cs); cy++) {
+        const key = cell(cx, cy), list = Wv.seg.get(key);
+        if (!list) Wv.seg.set(key, [seg]);
+        else { list.push(seg); if (list.length > 40) list.shift(); }   // the newest strands matter most
+      }
+  for (const q of found) {
+    const key = cell(Math.floor(q.x / cs), Math.floor(q.y / cs)), list = Wv.cross.get(key);
+    list ? list.push(q) : Wv.cross.set(key, [q]);
+  }
+  return found;
+}
+
+function nearCrossings(Wv, x, y, r) {
+  const cs = Wv.cs, out = [];
+  for (let cx = Math.floor((x - r) / cs); cx <= Math.floor((x + r) / cs); cx++)
+    for (let cy = Math.floor((y - r) / cs); cy <= Math.floor((y + r) / cs); cy++)
+      for (const q of Wv.cross.get(cell(cx, cy)) || []) {
+        const d = Math.hypot(q.x - x, q.y - y);
+        if (d > 3 && d < r) out.push({ ...q, d });
+      }
+  return out.sort((a, b) => a.d - b.d);
+}
+
+// The visit's hash decides whether it closes a space, which crossing it starts
+// from, how far it reaches, and how many corners the shard has.
+function shard(P, Wv, T, found, genes, isMine) {
+  const b = T.b, R = rng(((b[4] << 24 | b[5] << 16 | b[6] << 8 | b[7]) ^ 0x51ed270b) >>> 0);
+  const rate = clamp((25 + 12 * Math.log2(P.n + 1)) / Math.max(1, P.visits), 0.04, 0.9);
+  if (!found.length || (!isMine && R() > rate)) return null;
+  const I0 = found[Math.floor(R() * found.length)];
+  const grow = 1 + Math.log10(P.n + 1) / 3;
+  const reach = (isMine ? 70 + R() * 50 : 36 + R() * 74) * grow * P.cssPx;
+  // Corners come from the outer part of its reach, so a dense weave still
+  // gives whole shapes rather than slivers.
+  const cand = nearCrossings(Wv, I0.x, I0.y, reach).filter(q => q.d > reach * 0.33);
+  const k = 2 + Math.floor(R() * 3);
+  if (cand.length < 2) return null;
+  const pick = [];
+  while (pick.length < k && cand.length) pick.push(cand.splice(Math.floor(R() * Math.min(cand.length, 6)), 1)[0]);
+  const pts = [I0, ...pick];
+  const cx = pts.reduce((s, q) => s + q.x, 0) / pts.length, cy = pts.reduce((s, q) => s + q.y, 0) / pts.length;
+  pts.sort((a, c) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(c.y - cy, c.x - cx));
+  let area = 0;
+  for (let j = 0; j < pts.length; j++) { const a = pts[j], c = pts[(j + 1) % pts.length]; area += a.x * c.y - c.x * a.y; }
+  if (Math.abs(area) / 2 < (9 * P.cssPx) ** 2) return null;
+  const col = isMine ? T.col : T.E.pal[(b[7] + 2) % T.E.pal.length];
+  // In a long history there are many shards, so each one is a little clearer.
+  const thin = clamp(1 - 0.08 * Math.log2(Math.max(1, P.n / 100)), 0.6, 1);
+  return { pts, col, a: isMine ? 0.78 : (genes.dark ? 0.55 : 0.62) * thin };
+}
+
+// Glass lies over the weave: tinting it on light paper, glowing on dark.
+function glassMode(genes) { return genes.dark ? "screen" : "multiply"; }
+
+function drawShard(g, S, alpha = 1) {
+  g.fillStyle = css(S.col, S.a * alpha);
+  g.beginPath();
+  S.pts.forEach((q, j) => (j ? g.lineTo(q.x, q.y) : g.moveTo(q.x, q.y)));
+  g.closePath(); g.fill();
+}
 
 function drawMine(g, T, upto, cssPx, bg, glow) {
   const n = T.pts.length / 2, k = Math.max(2, Math.floor(upto));
@@ -323,12 +396,12 @@ export function createArt(canvas, opts = {}) {
   const g = canvas.getContext("2d");
   if (!g) return null;
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let genes, doors, P, wash, lines, doorLayer, mineLayer, sched, next, active, t0, total, mine, mineDone, onVisit;
+  let genes, doors, P, glass, lines, doorLayer, mineLayer, sched, next, active, t0, total, mine, mineDone, onVisit, Wv, fading;
   const off = () => { const c = document.createElement("canvas"); c.width = canvas.width; c.height = canvas.height; return c; };
 
   function rebuild() {
     P = plan(genes.state, genes, doors, canvas.width, canvas.height, canvas.width / (canvas.clientWidth || innerWidth));
-    wash = washCanvas(canvas.width, canvas.height); lines = off(); doorLayer = off(); mineLayer = off();
+    glass = off(); lines = off(); doorLayer = off(); mineLayer = off(); Wv = weave(P); fading = [];
     drawDoors(doorLayer.getContext("2d"), P, genes, genes.state);
     // The replay takes longer the longer the history is.
     total = reduce ? 0 : clamp(4 + 2 * Math.log2(P.visits + 1), 6, 18) * 1000;
@@ -338,25 +411,29 @@ export function createArt(canvas, opts = {}) {
   }
 
   function advance(now) {
-    const el = now - t0, lg = lines.getContext("2d"), wg = wash.getContext("2d");
+    const el = now - t0, lg = lines.getContext("2d");
     const budget = performance.now() + 14;
     while (next < sched.length && sched[next].at <= el && performance.now() < budget) {
       const T = strand(P, sched[next]);
       T.start = sched[next].at; T.drawn = 0; T.n = T.pts.length / 2;
       T.dur = reduce ? 0 : 500 + T.n * 3.2;
-      if (T.wash && onVisit) onVisit(sched[next].i + 1);
+      if (T.main) {
+        T.shard = shard(P, Wv, T, crossings(Wv, T, sched[next].i), genes, false);
+        if (onVisit) onVisit(sched[next].i + 1);
+      }
       active.push(T); next++;
     }
     const keep = [];
     for (const T of active) {
       const k = T.dur ? Math.floor(T.n * clamp((el - T.start) / T.dur, 0, 1)) : T.n;
       if (k > T.drawn) { drawRange(lg, T, T.drawn, k, P.cssPx); T.drawn = k; }
-      if (T.drawn >= T.n) { if (T.wash) drawWash(wg, T, washAlpha(genes, P)); }
+      if (T.drawn >= T.n) { if (T.shard) fading.push({ S: T.shard, at: el }); }
       else keep.push(T);
     }
     active = keep;
     if (next >= sched.length && !active.length && !mine) {
       mine = mineStrand(P); mine.start = el; mine.n = mine.pts.length / 2;
+      mine.shard = shard(P, Wv, mine, crossings(Wv, mine, -1), genes, true);
       if (onVisit) onVisit(P.n);
     }
   }
@@ -371,8 +448,17 @@ export function createArt(canvas, opts = {}) {
       // Breathing: the whole weave sways a hair around the centre.
       const s = 1 + 0.004 * Math.sin(theta), a = 0.002 * Math.sin(theta + 1.3);
       g.translate(canvas.width / 2, canvas.height / 2); g.rotate(a); g.scale(s, s); g.translate(-canvas.width / 2, -canvas.height / 2);
-      drawSoft(g, wash, canvas.width, canvas.height);
+      // Shards fade in once their strand has finished, then settle into the glass.
+      if (fading.length) {
+        const el = now - t0, gg = glass.getContext("2d"), still = [];
+        for (const f of fading) { const k = (el - f.at) / 700; if (k >= 1 || reduce) drawShard(gg, f.S); else still.push(f); }
+        fading = still;
+      }
       g.drawImage(lines, 0, 0);
+      g.globalCompositeOperation = glassMode(genes);
+      g.drawImage(glass, 0, 0);
+      for (const f of fading) drawShard(g, f.S, clamp((now - t0 - f.at) / 700, 0, 1));
+      g.globalCompositeOperation = "source-over";
       // Glowing tips on the strands still growing.
       for (const T of active) {
         const k = Math.max(0, T.drawn - 1);
@@ -386,7 +472,7 @@ export function createArt(canvas, opts = {}) {
           const k = reduce ? mine.n : mine.n * clamp((el - mine.start) / 3600, 0, 1);
           const mg = mineLayer.getContext("2d");
           mg.clearRect(0, 0, mineLayer.width, mineLayer.height);
-          if (k >= mine.n) { drawWash(wash.getContext("2d"), mine, washAlpha(genes, P) * 1.6); mineDone = true; }
+          if (k >= mine.n) { if (mine.shard) fading.push({ S: mine.shard, at: el }); mineDone = true; }
           drawMine(mg, mine, k, P.cssPx, genes.bg, 7);
           if (!mineDone && k > 1) {            // the travelling light at its tip
             const j = Math.floor(k) - 1;
@@ -419,17 +505,20 @@ export function renderCard(state, genes, theta, w, h, cssScale) {
   const g = c.getContext("2d");
   const P = plan(state, genes, doors, w, h, scale);
   g.fillStyle = css(genes.bg); g.fillRect(0, 0, w, h);
-  const wash = washCanvas(w, h);
-  const wg = wash.getContext("2d"), lines = document.createElement("canvas"); lines.width = w; lines.height = h;
+  const glass = document.createElement("canvas"); glass.width = w; glass.height = h;
+  const gg = glass.getContext("2d"), lines = document.createElement("canvas"); lines.width = w; lines.height = h;
+  const Wv = weave(P);
   const lg = lines.getContext("2d");
   for (const st of P.strands) {
     const T = strand(P, st);
+    if (T.main) { const S = shard(P, Wv, T, crossings(Wv, T, st.i), genes, false); if (S) drawShard(gg, S); }
     drawRange(lg, T, 0, T.pts.length / 2, scale);
-    if (T.wash) drawWash(wg, T, washAlpha(genes, P));
   }
   const my = mineStrand(P);
-  drawWash(wg, my, washAlpha(genes, P) * 1.6);
-  drawSoft(g, wash, w, h); g.drawImage(lines, 0, 0);
+  const myS = shard(P, Wv, my, crossings(Wv, my, -1), genes, true);
+  if (myS) drawShard(gg, myS);
+  g.drawImage(lines, 0, 0);
+  g.globalCompositeOperation = glassMode(genes); g.drawImage(glass, 0, 0); g.globalCompositeOperation = "source-over";
   drawDoors(g, P, genes, state);
   drawMine(g, my, my.pts.length / 2, scale, genes.bg, 7);
 
