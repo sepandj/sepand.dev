@@ -1,173 +1,20 @@
-// sepand.dev art engine.
+// sepand.dev, engine 4: the history, one thread per visit.
 //
-// A visit is a 256-bit hash from the server's chain. What you see is a pure
-// function of four things:
-//   epoch seed : the hash that last broke the rarity record. It sets the
-//                structure: space, symmetry, which fields draw lines, palette.
-//   sites      : the doors that existed when you came. Their fingerprint is
-//                folded into the structure, so every new door changes the work.
-//   visit hash : this visit only. Where the doors sit, how the lines bend.
-//   n          : how many visits came before. More visits, more lines.
-// Motion only ever uses whole-number multiples of one loop angle, so the piece
-// repeats exactly every LOOP seconds and never drifts.
+// Every visit that has ever happened is a thread. Each one starts where its
+// own hash says, follows the currents of the era (epoch) it was born in, and
+// bends around the doors. Eras differ in their currents, colours and stroke,
+// so a rare visit that opens a new era changes everything drawn after it.
+// The page draws the whole history oldest first, then yours, brighter, last.
 
 export const LOOP = 90; // seconds
 export const MAX_SITES = 8;
+export const fixedScale = true;
 
-const VERT = `attribute vec2 a; void main(){ gl_Position = vec4(a,0.,1.); }`;
+const TAU = Math.PI * 2;
 
-const FRAG = `
-#ifdef GL_OES_standard_derivatives
-#extension GL_OES_standard_derivatives : enable
-#endif
-#ifdef GL_FRAGMENT_PRECISION_HIGH
-precision highp float;
-#else
-precision mediump float;
-#endif
-uniform vec2 uRes;
-uniform float uPx;            // device pixels per css pixel
-uniform float uTh;            // loop angle 0..2pi
-uniform vec4 uG, uH;          // structure / visit seeds in 0..1
-uniform float uN, uCells, uSrc, uSym, uMap;
-uniform float uZoom, uAmp, uTwist, uBreak;
-uniform vec2 uOff;
-uniform vec4 uW;              // field weights: contour, cells, waves, flow
-uniform vec4 uW2;             // second line family weights
-uniform float uLinesA, uLinesB, uWidthA, uWidthB, uAlphaA, uAlphaB, uHair;
-uniform vec3 uBg, uBg2, uInk1, uInk2, uInk3;
-uniform float uGrain;
-uniform float uMo;            // how far anything moves (small: it breathes)
-uniform vec4 uSite[${MAX_SITES}];   // xy centre (uv), z radius (uv), w swirl
-uniform float uSiteN;
-
-const float TAU = 6.28318530718;
-
-float h1(float x){ return fract(sin(x * 91.3458 + 47.853) * 43758.5453); }
-float hp(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-vec2 rot(vec2 p, float a){ float c = cos(a), s = sin(a); return vec2(c*p.x - s*p.y, s*p.x + c*p.y); }
-float harm(float r){ float k = floor(r * 3.0) + 1.0; return r > 0.5 ? k : -k; }
-
-// Anti-aliased line on the iso-levels of x, width w in css pixels.
-float iso(float x, float w){
-  float d = abs(fract(x + 0.5) - 0.5);
-#ifdef GL_OES_standard_derivatives
-  float fw = max(fwidth(x), 1e-5);
-#else
-  float fw = 0.0035 * uLinesA;
-#endif
-  // Where lines crowd closer than a few pixels they would only shimmer, so
-  // they fade into the ground instead.
-  float crowd = 1.0 - smoothstep(0.12, 0.3, fw);
-  return (1.0 - smoothstep(w * uPx * 0.5 - 0.5, w * uPx * 0.5 + 0.5, d / fw)) * crowd;
-}
-
-void main(){
-  vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / min(uRes.x, uRes.y);
-
-  // Doors: each one twists the space around it and keeps a quiet room inside.
-  vec2 q = uv;
-  float calm = 0.0, ring = 0.0;
-  for (int i = 0; i < ${MAX_SITES}; i++) {
-    if (float(i) >= uSiteN) break;
-    vec4 s = uSite[i];
-    vec2 d = q - s.xy;
-    float r = length(d);
-    float f = exp(-r * r / (s.z * s.z * 7.0));
-    float k = harm(h1(float(i) * 3.3 + uH.y * 7.0));
-    q = s.xy + rot(d, s.w * f * (1.0 + 0.25 * uMo * sin(k * uTh + float(i))));
-    float ru = length(uv - s.xy) / s.z;
-    calm = max(calm, 1.0 - smoothstep(0.9, 1.0, ru));
-    ring = max(ring, iso(ru, 1.2) * (1.0 - smoothstep(1.0, 1.1, ru)) * smoothstep(0.85, 0.95, ru));
-  }
-
-  vec2 p = rot(q * uZoom, uTwist * uMo * sin(uTh + uG.x * TAU)) - uOff;
-  vec2 raw = p;
-  if (uSym > 1.5) {
-    float a = atan(p.y, p.x), sec = TAU / uSym;
-    a = mod(a, sec); a = abs(a - 0.5 * sec);
-    p = mix(length(p) * vec2(cos(a), sin(a)), raw, uBreak);
-  }
-  if (uMap > 0.5 && uMap < 1.5) {
-    float r = length(p) + 1e-3;
-    p = rot(p / r * (log(r) * 1.4 + 2.2), 0.6 + uG.z);
-  } else if (uMap > 1.5) {
-    p = p / max(dot(p, p), 0.04) * 0.6;
-  }
-
-  for (int i = 0; i < 16; i++) {
-    if (float(i) >= uN) break;
-    float fi = float(i);
-    float r1 = h1(fi * 1.7 + uH.x * 91.0), r2 = h1(fi * 3.1 + uG.y * 53.0);
-    float r3 = h1(fi * 5.3 + uH.z * 17.0), r4 = h1(fi * 7.9 + uG.w * 29.0);
-    vec2 d = vec2(cos(r1 * TAU), sin(r1 * TAU));
-    float f = mix(0.5, 2.6, r2) * (1.0 + fi * 0.1);
-    float k = harm(r3);
-    float amp = uAmp / (1.0 + fi * 0.45);
-    float sway = uMo * sin(k * uTh + r2 * TAU);
-    p += amp * vec2(sin(dot(p, d) * f + sway + r4 * TAU),
-                    cos(dot(p, vec2(-d.y, d.x)) * f * 1.13 - sway + r1 * TAU));
-  }
-
-  // Smooth scalar fields. Lines are drawn on their level sets.
-  float contour = p.x * cos(uG.z * TAU) + p.y * sin(uG.z * TAU) + 0.5 * sin(length(p) * 2.1 + uH.y * TAU);
-  float d1 = 9.0, d2 = 9.0;
-  for (int j = 0; j < 20; j++) {
-    if (float(j) >= uCells) break;
-    float fj = float(j);
-    vec2 b = vec2(h1(fj * 2.3 + uH.w * 37.0), h1(fj * 4.1 + uG.x * 71.0)) * 3.2 - 1.6;
-    float m = harm(h1(fj * 6.7 + uH.x * 13.0));
-    float rr = 0.15 + 0.35 * h1(fj * 8.3 + uG.y * 19.0);
-    vec2 c = b + rr * uMo * 0.5 * vec2(cos(m * uTh + fj), sin(m * uTh + fj));
-    float dd = length(p - c);
-    if (dd < d1) { d2 = d1; d1 = dd; } else if (dd < d2) { d2 = dd; }
-  }
-  float cells = d1;
-  float waves = 0.0;
-  for (int j = 0; j < 7; j++) {
-    if (float(j) >= uSrc) break;
-    float fj = float(j);
-    vec2 c = vec2(h1(fj * 3.7 + uG.w * 11.0), h1(fj * 9.1 + uH.y * 23.0)) * 2.4 - 1.2;
-    waves += length(p - c) * (0.6 + h1(fj + uH.z * 7.0)) * (mod(fj, 2.0) * 2.0 - 1.0);
-  }
-  waves /= max(uSrc, 1.0);
-  float flow = p.y + 0.4 * sin(p.x * 1.3 + uMo * sin(uTh));
-  vec4 F = vec4(contour, cells, waves, flow);
-
-  float a = dot(uW, F) / max(dot(uW, vec4(1.0)), 1e-3);
-  float b = dot(uW2, F) / max(dot(uW2, vec4(1.0)), 1e-3);
-
-  float lineA = iso(a * uLinesA, uWidthA) * uAlphaA;
-  float lineB = iso(b * uLinesB, uWidthB) * uAlphaB;
-  // Cell edges as true hairlines: about one css pixel wide wherever they are.
-  float e = d2 - d1;
-#ifdef GL_OES_standard_derivatives
-  float ef = max(fwidth(e), 1e-5);
-#else
-  float ef = 0.004;
-#endif
-  float hair = uHair * (1.0 - smoothstep(0.4 * uPx, 0.4 * uPx + 1.0, e / ef)) * (1.0 - smoothstep(0.12, 0.3, ef)) * 0.6;
-
-  // Quiet ground: two close tones, barely moving.
-  float g = 0.5 + 0.5 * sin(dot(uv, vec2(0.8, 1.3)) + 0.2 * uMo * sin(uTh));
-  vec3 col = mix(uBg, uBg2, g * 0.7 + 0.15 * dot(uv, uv));
-
-  float open = 1.0 - calm;
-  vec3 inkA = mix(uInk1, uInk2, 0.5 + 0.5 * sin(a * 0.9 + uG.w * TAU));
-  col = mix(col, uInk3, hair * open);
-  col = mix(col, uInk3, lineB * open);
-  col = mix(col, inkA, lineA * open);
-  col = mix(col, uInk1, ring * 0.9);
-
-  col += (hp(gl_FragCoord.xy) - 0.5) * uGrain;
-  gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
-}`;
-
-// ---- genome ------------------------------------------------------------------
+// ---- small helpers ---------------------------------------------------------
 
 const hexBytes = h => Uint8Array.from(h.match(/../g).map(x => parseInt(x, 16)));
-const u = (b, i) => b[i % b.length] / 255;
-
 function hsl(h, s, l) {
   h = ((h % 1) + 1) % 1;
   const f = n => {
@@ -177,8 +24,7 @@ function hsl(h, s, l) {
   return [f(0), f(8), f(4)];
 }
 export const css = (c, a = 1) => `rgba(${c.map(x => Math.round(x * 255)).join(",")},${a})`;
-
-// FNV-1a, enough to give each door name its own stream of numbers.
+export function fmtHash(h) { return h.match(/.{4}/g).join(" "); }
 function fnv(str) {
   let h = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
@@ -189,71 +35,91 @@ function rng(seed) {
   return () => { s = (s + 0x6d2b79f5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
+const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 
-export function genome(state) {
-  const E = hexBytes(state.epoch_seed), H = hexBytes(state.hash);
-  const S = hexBytes(state.sites_digest || "00".repeat(32));
-  // Structure = epoch seed folded with the doors' fingerprint. Palette bytes
-  // (0..7) stay the epoch's own, so a new door re-shapes rather than recolours.
-  const G = E.map((x, i) => (i < 8 ? x : x ^ S[i]));
-  const n = Math.max(1, state.n), lg = Math.log2(n + 1);
+// ---- the history ---------------------------------------------------------------
 
-  const hue = u(G, 3), vh = (u(H, 3) - 0.5) * 0.06;
-  const dark = G[4] % 3 === 0;           // a third of epochs are night pieces
-  const bgS = 0.06 + u(G, 5) * 0.1;
-  const bg = dark ? hsl(hue + 0.5, bgS, 0.075 + u(G, 6) * 0.04) : hsl(hue + 0.08, bgS, 0.9 + u(G, 6) * 0.05);
-  const bg2 = dark ? hsl(hue + 0.55, bgS, 0.11) : hsl(hue + 0.12, bgS * 1.3, 0.86);
-  const spread = 0.08 + u(G, 7) * 0.35;
-  const sat = 0.14 + u(G, 2) * 0.22;
-  const L1 = dark ? 0.72 : 0.3, L2 = dark ? 0.58 : 0.45, L3 = dark ? 0.32 : 0.74;
-  const ink1 = hsl(hue + vh, sat, L1);
-  const ink2 = hsl(hue + spread + vh, sat * 0.9, L2);
-  const ink3 = hsl(hue - spread * 0.5, sat * 0.7, L3);
+export async function prepare(state) {
+  const r = await fetch(`/api/chain/${state.n}`);
+  if (!r.ok) throw new Error("chain");
+  const d = await r.json();
+  state.chain = { n: d.n, h: b64(d.h), e: b64(d.e), seeds: d.seeds };
+}
 
-  const syms = [0, 0, 0, 0, 0, 0, 3, 5, 7, 11];
-  const w = [u(G, 8), u(G, 9), u(G, 10), u(G, 11)].map(x => x * x);
-  w[G[12] % 4] += 1.2;
-  const w2 = [u(G, 30), u(G, 31), u(G, 28), u(G, 29)].map(x => x * x);
-  w2[(G[12] + 1 + (G[27] % 3)) % 4] += 1.2;
+// ---- eras ---------------------------------------------------------------------
 
+const STYLES = ["solid", "beads", "dashes", "double", "solid", "beads"];
+
+function era(seedHex, sitesHex, dark) {
+  const S0 = hexBytes(seedHex), D = hexBytes(sitesHex || "00".repeat(32));
+  // The doors' fingerprint folds into the currents (not the colours), so a new
+  // door bends every thread drawn after it.
+  const S = S0.map((x, i) => (i < 8 ? x : x ^ D[i]));
+  const u = i => S[i % 32] / 255;
+  const R = rng((S[8] << 24 | S[9] << 16 | S[10] << 8 | S[11]) >>> 0);
+  const terms = [];
+  const nt = 3 + (S[12] % 4);
+  for (let i = 0; i < nt; i++) {
+    const f = 0.6 + R() * 2.6, a = R() * TAU;
+    terms.push({ fx: f * Math.cos(a), fy: f * Math.sin(a), ph: R() * TAU, amp: (0.5 + R()) / (1 + i * 0.5) });
+  }
+  // Palette: 5 colours around the era's hue, muted but alive.
+  const hue = u(13), scheme = S[14] % 4;
+  const offs = [[0, .06, .12, -.06, -.12], [0, .33, .67, .05, .38], [0, .5, .03, .53, .25], [0, .42, .58, .08, .5]][scheme];
+  const sat = 0.32 + u(15) * 0.28;
+  const pal = offs.map((o, i) => hsl(hue + o, sat * (i % 2 ? 0.8 : 1), dark ? 0.66 + 0.06 * (i % 3) : 0.42 + 0.05 * (i % 3)));
   return {
-    dark, ink: ink1, bg,
-    uG: [u(G, 0), u(G, 1), u(G, 2), u(G, 6)],
-    uH: [u(H, 0), u(H, 1), u(H, 2), u(H, 6)],
-    uN: Math.min(16, 2 + lg * 1.1),
-    uCells: Math.min(20, Math.round(3 + lg * 1.4)),
-    uSrc: Math.min(7, Math.round(1 + lg * 0.5)),
-    uSym: syms[G[13] % syms.length],
-    uMap: [0, 0, 0, 1, 2][G[14] % 5],
-    uZoom: 1.1 + u(G, 15) * 1.2 + u(H, 15) * 0.3,
-    uAmp: 0.18 + u(G, 16) * 0.35,
-    uTwist: (u(G, 22) - 0.5) * 0.6,
-    uBreak: 0.2 + u(G, 26) * 0.5,
-    uOff: [(u(G, 24) - .5) * 1.6 + (u(H, 24) - .5) * .3, (u(G, 25) - .5) * 1.4 + (u(H, 25) - .5) * .3],
-    uW: w, uW2: w2,
-    // Line density grows with every visit.
-    uLinesA: 4 + u(G, 17) * 6 + lg * 1.1,
-    uLinesB: 2 + u(G, 19) * 4 + lg * 0.7,
-    uWidthA: 1.0 + u(G, 20) * 0.9,
-    uWidthB: 0.7,
-    uAlphaA: 0.85,
-    uAlphaB: Math.min(0.55, 0.12 + lg * 0.035) * (G[18] % 4 === 0 ? 0 : 1),
-    uHair: n > 64 && G[21] % 2 === 0 ? 1 : 0,
-    uBg: bg, uBg2: bg2, uInk1: ink1, uInk2: ink2, uInk3: ink3,
-    uGrain: dark ? 0.035 : 0.025,
-    uMo: 0.07 + u(G, 23) * 0.05,
+    kind: S[0] % 5, terms, pal, style: STYLES[S[1] % STYLES.length],
+    c: [(u(16) - 0.5) * 1.2, (u(17) - 0.5) * 1.2], rot: (u(18) - 0.5) * 2.4, spin: u(19) < 0.5 ? -1 : 1,
+    drift: [Math.cos(u(20) * TAU), Math.sin(u(20) * TAU)], cell: [1.2 + u(21) * 2.4, 1.2 + u(22) * 2.4],
+    step: 0.006 + u(23) * 0.004, len: 0.6 + u(24) * 0.9,
   };
 }
 
-// Where the doors sit, in shader uv (y up, unit = shorter side) and css px.
-// Deterministic from the visit and each door's name, kept clear of the edges,
-// the corner button and the bottom bar, and apart from each other.
+// Direction of the current at (x, y) in an era, with the doors as whirlpools.
+function flow(E, x, y, doors, wob) {
+  let vx = 0, vy = 0;
+  for (const t of E.terms) {                 // curl of a sum of waves
+    const c = t.amp * Math.cos(t.fx * x + t.fy * y + t.ph + wob);
+    vx += c * t.fy; vy -= c * t.fx;
+  }
+  const dx = x - E.c[0], dy = y - E.c[1], r = Math.hypot(dx, dy) + 1e-3;
+  switch (E.kind) {
+    case 1: vx = 0.5 * vx + E.spin * -dy / r + 0.25 * dx / r; vy = 0.5 * vy + E.spin * dx / r + 0.25 * dy / r; break; // spiral
+    case 2: vx = 0.6 * vx + E.drift[0] * 1.4; vy = 0.6 * vy + E.drift[1] * 1.4; break;                               // currents
+    case 3: { const [a, b] = E.cell;                                                                                // cells
+      vx = 0.35 * vx + b * Math.sin(a * x + E.rot) * Math.cos(b * y); vy = 0.35 * vy - a * Math.cos(a * x + E.rot) * Math.sin(b * y); break; }
+    case 4: vx = 0.6 * vx + dx / r; vy = 0.6 * vy + dy / r; break;                                                 // bloom
+  }
+  for (const d of doors) {
+    const ex = x - d.wx, ey = y - d.wy, rr = Math.hypot(ex, ey) + 1e-4;
+    const k = Math.exp(-(((rr - d.wr) / (0.8 * d.wr)) ** 2)) * 2.2;
+    vx += d.spin * -ey / rr * k; vy += d.spin * ex / rr * k;      // circulate
+    if (rr < d.wr * 1.25) { const push = (d.wr * 1.25 - rr) / d.wr * 5; vx += ex / rr * push; vy += ey / rr * push; }
+  }
+  const m = Math.hypot(vx, vy) + 1e-6;
+  return [vx / m, vy / m];
+}
+
+// ---- genome ---------------------------------------------------------------------
+
+export function genome(state) {
+  const E = hexBytes(state.epoch_seed);
+  const u = i => E[i] / 255;
+  // Ground and type colour: the same formula the server uses to paint the page
+  // before this script runs (app.py colours()), so nothing flashes.
+  const hue = u(3), dark = E[4] % 3 === 0, bgS = 0.06 + u(5) * 0.1;
+  const bg = dark ? hsl(hue + 0.5, bgS, 0.075 + u(6) * 0.04) : hsl(hue + 0.08, bgS, 0.9 + u(6) * 0.05);
+  const ink = hsl(hue, 0.14 + u(2) * 0.22, dark ? 0.72 : 0.3);
+  return { dark, bg, ink, state };
+}
+
+// Where the doors sit, in css px, so the links match the drawing.
 export function placeDoors(state, sites, W, H) {
   const m = Math.min(W, H);
-  const rPx = Math.max(52, Math.min(92, m * 0.11));
-  const r = rPx / m;
+  const rPx = Math.max(50, Math.min(86, m * 0.105));
   const out = [];
-  const padX = rPx + 14, top = rPx + 74, bottom = rPx + 110;
+  const padX = rPx + 18, top = rPx + 78, bottom = rPx + 116;
   for (const [i, s] of sites.slice(0, MAX_SITES).entries()) {
     const R = rng(fnv(state.hash + "|" + s.name));
     let best = null;
@@ -263,64 +129,185 @@ export function placeDoors(state, sites, W, H) {
       if (!best || gap > best.gap) best = { x, y, gap };
       if (gap > rPx) break;
     }
-    const swirl = (R() < 0.5 ? -1 : 1) * (0.9 + R() * 1.6);
-    out.push({ ...s, i, x: best.x, y: best.y, rPx, u: (best.x - W / 2) / m, v: (H / 2 - best.y) / m, r, swirl });
+    out.push({ ...s, i, x: best.x, y: best.y, rPx, spin: R() < 0.5 ? -1 : 1, hue: (fnv(s.name) % 1000) / 1000 });
   }
   return out;
 }
 
-// ---- renderer ----------------------------------------------------------------
+// ---- drawing ---------------------------------------------------------------------
 
-export function createArt(canvas, opts = {}) {
-  const gl = canvas.getContext("webgl", {
-    antialias: false, alpha: false, preserveDrawingBuffer: !!opts.preserve,
-    powerPreference: "high-performance",
-  });
-  if (!gl) return null;
-  gl.getExtension("OES_standard_derivatives");
-  const sh = (type, src) => {
-    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
-    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
-    return s;
-  };
-  const prog = gl.createProgram();
-  gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT));
-  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FRAG));
-  gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-  gl.useProgram(prog);
-  const buf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-  const loc = gl.getAttribLocation(prog, "a");
-  gl.enableVertexAttribArray(loc);
-  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-  const U = {};
-  const uni = name => (U[name] ??= gl.getUniformLocation(prog, name));
+// Everything needed to draw the history at a given size (W, H in device px).
+function plan(state, genes, doors, W, H, cssPx) {
+  const ch = state.chain, n = ch.n, half = Math.min(W, H) / 2;
+  const wDoors = doors.map(d => ({ ...d, wx: (d.x * cssPx - W / 2) / half, wy: (H / 2 - d.y * cssPx) / half, wr: d.rPx * cssPx / half }));
+  const eras = {};
+  const getEra = e => (eras[e] ??= era(ch.seeds[e] || state.epoch_seed, state.sites_digest, genes.dark));
+  // Very long histories: keep every recent thread, thin out the oldest.
+  const KEEP = 5000, idx = [];
+  if (n <= KEEP) for (let i = 0; i < n; i++) idx.push(i);
+  else {
+    const stride = Math.ceil((n - KEEP / 2) / (KEEP / 2));
+    for (let i = 0; i < n - KEEP / 2; i += stride) idx.push(i);
+    for (let i = n - KEEP / 2; i < n; i++) idx.push(i);
+  }
+  return { n, W, H, half, cssPx, wDoors, getEra, idx, ax: W / 2 / half, ay: H / 2 / half, chain: ch };
+}
 
-  let genes = null, doors = [];
-  return {
-    gl,
-    set(g, d = []) { genes = g; doors = d; },
-    draw(theta, pxPerCss = 1) {
-      gl.viewport(0, 0, canvas.width, canvas.height);
-      gl.uniform2f(uni("uRes"), canvas.width, canvas.height);
-      gl.uniform1f(uni("uPx"), pxPerCss);
-      gl.uniform1f(uni("uTh"), theta);
-      for (const [k, v] of Object.entries(genes)) {
-        if (k[0] !== "u") continue;
-        const l = uni(k);
-        if (!l) continue;
-        if (typeof v === "number") gl.uniform1f(l, v);
-        else if (v.length === 2) gl.uniform2fv(l, v);
-        else if (v.length === 3) gl.uniform3fv(l, v);
-        else gl.uniform4fv(l, v);
+// Follow the current from (x, y) for up to `steps`, as screen points.
+function trace(P, E, x, y, steps, dir, wob) {
+  const pts = [];
+  for (let s = 0; s < steps; s++) {
+    let inside = false;
+    for (const d of P.wDoors) if (Math.hypot(x - d.wx, y - d.wy) < d.wr) inside = true;
+    if (inside || Math.abs(x) > P.ax + 0.3 || Math.abs(y) > P.ay + 0.3) break;
+    pts.push(P.W / 2 + x * P.half, P.H / 2 - y * P.half);
+    const [ux, uy] = flow(E, x, y, P.wDoors, wob);                       // midpoint step
+    const [vx, vy] = flow(E, x + ux * E.step * 0.5 * dir, y + uy * E.step * 0.5 * dir, P.wDoors, wob);
+    x += vx * E.step * dir; y += vy * E.step * dir;
+  }
+  return pts;
+}
+
+// One thread as a flat list of screen points. Yours starts on screen and runs
+// both ways from there, so it is always long and in view.
+function thread(P, i, mine = false) {
+  const { h, e } = P.chain;
+  const b = h.subarray(i * 8, i * 8 + 8);
+  const E = P.getEra((e[i * 2] << 8) | e[i * 2 + 1]);
+  const fx = (b[0] << 8 | b[1]) / 65535 * 2 - 1, fy = (b[2] << 8 | b[3]) / 65535 * 2 - 1;
+  const wob = (b[6] / 255 - 0.5) * 0.6;
+  if (mine) {
+    // Several starts, all from your own hash; the longest path is yours.
+    const R = rng((b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3]) >>> 0);
+    let best = null;
+    for (let t = 0; t < 8; t++) {
+      const x = (t ? R() * 2 - 1 : fx) * (P.ax - 0.25), y = (t ? R() * 2 - 1 : fy) * (P.ay - 0.35);
+      const back = trace(P, E, x, y, 420, -1, wob), fwd = trace(P, E, x, y, 420, 1, wob);
+      const pts = [];
+      for (let k = back.length - 2; k >= 2; k -= 2) pts.push(back[k], back[k + 1]);
+      const all = pts.concat(fwd);
+      if (!best || all.length > best.length) best = all;
+      if (best.length > 900) break;
+    }
+    return { pts: best, E, b };
+  }
+  const steps = Math.round((120 + b[4] / 255 * 380) * E.len);
+  return { pts: trace(P, E, fx * (P.ax + 0.1), fy * (P.ay + 0.1), steps, b[5] & 1 ? 1 : -1, wob), E, b };
+}
+
+function stroke(g, T, color, width, alpha, cssPx) {
+  const p = T.pts;
+  if (p.length < 4) return;
+  g.strokeStyle = css(color, alpha); g.fillStyle = css(color, alpha); g.lineWidth = width;
+  g.lineCap = "round"; g.lineJoin = "round";
+  const style = T.E.style;
+  if (style === "beads") {
+    for (let k = 0; k < p.length; k += 8) { g.beginPath(); g.arc(p[k], p[k + 1], width * 0.85, 0, TAU); g.fill(); }
+    return;
+  }
+  g.setLineDash(style === "dashes" ? [6 * cssPx, 5 * cssPx] : []);
+  const path = off => {
+    g.beginPath();
+    for (let k = 0; k < p.length; k += 2) {
+      let X = p[k], Y = p[k + 1];
+      if (off) {
+        const j = Math.min(k + 2, p.length - 2), i0 = Math.max(k - 2, 0);
+        const tx = p[j] - p[i0], ty = p[j + 1] - p[i0 + 1], l = Math.hypot(tx, ty) || 1;
+        X += -ty / l * off; Y += tx / l * off;
       }
-      const arr = new Float32Array(4 * MAX_SITES);
-      doors.forEach((d, i) => arr.set([d.u, d.v, d.r, d.swirl], i * 4));
-      gl.uniform4fv(uni("uSite[0]"), arr);
-      gl.uniform1f(uni("uSiteN"), doors.length);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      k ? g.lineTo(X, Y) : g.moveTo(X, Y);
+    }
+    g.stroke();
+  };
+  if (style === "double") { g.lineWidth = width * 0.6; path(1.6 * cssPx); path(-1.6 * cssPx); }
+  else path(0);
+  g.setLineDash([]);
+}
+
+function threadStyle(P, T, i, mine) {
+  const age = P.n > 1 ? i / (P.n - 1) : 1;            // 0 oldest .. 1 newest
+  const col = T.E.pal[T.b[7] % T.E.pal.length];
+  if (mine) return { col, w: (2.4 + Math.min(1.6, Math.log10(P.n + 1) * 0.5)) * P.cssPx, a: 1 };
+  // Older threads recede; in a crowded history every thread gets quieter.
+  const crowd = Math.max(0.35, Math.min(1, Math.sqrt(800 / P.n)));
+  return { col, w: (0.7 + 0.8 * age) * P.cssPx, a: (0.3 + 0.55 * Math.pow(age, 0.8)) * crowd };
+}
+
+// Door outlines: closed wavy lines that gain lobes and rings as the history grows.
+function drawDoors(g, P, genes, state) {
+  const H = hexBytes(state.hash), lg = Math.log2(P.n + 1);
+  const K = 2 + Math.floor(lg / 1.5);
+  const rings = 1 + Math.min(3, Math.floor(lg / 3));
+  for (const d of P.wDoors) {
+    const cx = d.x * P.cssPx, cy = d.y * P.cssPx, R = d.rPx * P.cssPx;
+    const col = hsl(d.hue, genes.dark ? 0.35 : 0.4, genes.dark ? 0.7 : 0.38);
+    g.fillStyle = css(genes.bg, 0.92);
+    g.beginPath(); g.arc(cx, cy, R * 0.97, 0, TAU); g.fill();
+    for (let r = 0; r < rings; r++) {
+      g.beginPath();
+      for (let s = 0; s <= 240; s++) {
+        const th = s / 240 * TAU;
+        let rad = 1;
+        for (let k = 1; k <= K; k++) rad += (H[(k * 3 + r + d.i) % 32] / 255 - 0.5) * 0.12 / k * Math.cos(k * th + H[(k * 5 + r) % 32] / 255 * TAU);
+        const rr = R * (1 - r * 0.07) * rad;
+        const X = cx + Math.cos(th) * rr, Y = cy + Math.sin(th) * rr;
+        s ? g.lineTo(X, Y) : g.moveTo(X, Y);
+      }
+      g.strokeStyle = css(col, r ? 0.45 / r : 0.95); g.lineWidth = (r ? 0.7 : 1.3) * P.cssPx; g.stroke();
+    }
+  }
+}
+
+function drawMine(g, P, T, k, glow, bg) {
+  const st = threadStyle(P, T, P.n - 1, true);
+  const n = Math.max(4, Math.floor(T.pts.length * k / 2) * 2);
+  const part = { ...T, pts: T.pts.slice(0, n) };
+  // A channel of bare ground under it, so it cuts clear of a dense weave.
+  stroke(g, { ...part, E: { ...part.E, style: "solid" } }, bg, st.w + 5 * P.cssPx, 0.85, P.cssPx);
+  g.shadowColor = css(st.col, 0.6); g.shadowBlur = glow * P.cssPx;
+  stroke(g, part, st.col, st.w, st.a, P.cssPx);
+  g.shadowBlur = 0;
+  if (part.pts.length > 1) { g.fillStyle = css(st.col); g.beginPath(); g.arc(part.pts[0], part.pts[1], 3.2 * P.cssPx, 0, TAU); g.fill(); }
+}
+
+export function createArt(canvas) {
+  const g = canvas.getContext("2d");
+  if (!g) return null;
+  let genes, doors, P, hist, doorLayer, cursor = 0, built = false, myStart = 0, myT = null;
+  const off = () => { const c = document.createElement("canvas"); c.width = canvas.width; c.height = canvas.height; return c; };
+  function rebuild() {
+    P = plan(genes.state, genes, doors, canvas.width, canvas.height, canvas.width / innerWidth);
+    hist = off(); doorLayer = off();
+    drawDoors(doorLayer.getContext("2d"), P, genes, genes.state);
+    cursor = 0; built = P.idx.length <= 1; myStart = 0;
+    myT = thread(P, P.n - 1, true);
+  }
+  function grow(budgetMs) {
+    const t0 = performance.now(), hg = hist.getContext("2d");
+    while (cursor < P.idx.length - 1 && performance.now() - t0 < budgetMs) {   // everyone before you
+      const i = P.idx[cursor++];
+      const th = thread(P, i), st = threadStyle(P, th, i, false);
+      stroke(hg, th, st.col, st.w, st.a, P.cssPx);
+    }
+    if (cursor >= P.idx.length - 1) built = true;
+  }
+  return {
+    set(gn, d = []) { genes = gn; doors = d; rebuild(); },
+    draw(theta) {
+      if (!built) grow(10);
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.fillStyle = css(genes.bg); g.fillRect(0, 0, canvas.width, canvas.height);
+      // Breathing: the whole weave sways a hair around the centre.
+      const s = 1 + 0.004 * Math.sin(theta), a = 0.002 * Math.sin(theta + 1.3);
+      g.translate(canvas.width / 2, canvas.height / 2); g.rotate(a); g.scale(s, s); g.translate(-canvas.width / 2, -canvas.height / 2);
+      g.drawImage(hist, 0, 0);
+      g.drawImage(doorLayer, 0, 0);
+      if (built) {                                  // yours draws itself in, then glows softly
+        if (!myStart) myStart = performance.now();
+        const k = Math.min(1, (performance.now() - myStart) / 1800);
+        drawMine(g, P, myT, k, 5 + 2 * Math.sin(theta * 3), genes.bg);
+      }
+      g.setTransform(1, 0, 0, 1, 0, 0);
     },
   };
 }
@@ -329,36 +316,35 @@ export function createArt(canvas, opts = {}) {
 
 export const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace';
 
-export function fmtHash(h) { return h.match(/.{4}/g).join(" "); }
-
-// Full-bleed art with its doors named, and a small typed caption.
 export function renderCard(state, genes, theta, w, h) {
-  const scale = Math.min(w, h) / 420;     // the card reads like a ~420px screen
-  const cw = w / scale, ch = h / scale;
-  const doors = placeDoors(state, state.sites || [], cw, ch);
-  const glc = document.createElement("canvas");
-  glc.width = w; glc.height = h;
-  const art = createArt(glc, { preserve: true });
-  art.set(genes, doors); art.draw(theta, scale);
-  const out = document.createElement("canvas");
-  out.width = w; out.height = h;
-  const x = out.getContext("2d");
-  x.drawImage(glc, 0, 0);
-  art.gl.getExtension("WEBGL_lose_context")?.loseContext();
+  const scale = Math.min(w, h) / 420;
+  const doors = placeDoors(state, state.sites || [], w / scale, h / scale);
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const g = c.getContext("2d");
+  const P = plan(state, genes, doors, w, h, scale);
+  g.fillStyle = css(genes.bg); g.fillRect(0, 0, w, h);
+  for (let k = 0; k < P.idx.length - 1; k++) {
+    const i = P.idx[k], th = thread(P, i), st = threadStyle(P, th, i, false);
+    stroke(g, th, st.col, st.w, st.a, scale);
+  }
+  drawDoors(g, P, genes, state);
+  drawMine(g, P, thread(P, P.n - 1, true), 1, 6, genes.bg);
 
-  x.textAlign = "center"; x.textBaseline = "middle"; x.fillStyle = css(genes.ink);
-  x.font = `${Math.round(12 * scale)}px ${MONO}`;
-  for (const d of doors) x.fillText(d.name, d.x * scale, d.y * scale);
-
-  x.textAlign = "left"; x.textBaseline = "alphabetic";
+  g.textAlign = "center"; g.textBaseline = "middle"; g.fillStyle = css(genes.ink);
+  g.font = `${Math.round(12 * scale)}px ${MONO}`;
+  for (const d of doors) g.fillText(d.name, d.x * scale, d.y * scale);
+  g.textAlign = "left"; g.textBaseline = "alphabetic";
   const pad = 20 * scale, fs = 10 * scale;
-  x.fillStyle = css(genes.ink); x.font = `600 ${Math.round(fs * 1.4)}px ${MONO}`;
-  x.fillText("sepand.dev", pad, h - pad - fs * 4.2);
-  x.fillStyle = css(genes.ink, 0.7); x.font = `${Math.round(fs)}px ${MONO}`;
-  x.fillText(`no. ${state.n.toLocaleString("en-US")}  ·  ${state.when}`, pad, h - pad - fs * 2.5);
+  const fade = g.createLinearGradient(0, h - fs * 9 - pad, 0, h);       // soft ground behind the caption
+  fade.addColorStop(0, css(genes.bg, 0)); fade.addColorStop(0.45, css(genes.bg, 0.85)); fade.addColorStop(1, css(genes.bg, 0.92));
+  g.fillStyle = fade; g.fillRect(0, h - fs * 9 - pad, w, fs * 9 + pad);
+  g.fillStyle = css(genes.ink); g.font = `600 ${Math.round(fs * 1.4)}px ${MONO}`;
+  g.fillText("sepand.dev", pad, h - pad - fs * 4.2);
+  g.fillStyle = css(genes.ink, 0.7); g.font = `${Math.round(fs)}px ${MONO}`;
+  g.fillText(`no. ${state.n.toLocaleString("en-US")}  ·  ${state.when}`, pad, h - pad - fs * 2.5);
   const hx = fmtHash(state.hash);
-  x.font = `${Math.round(fs * 0.8)}px ${MONO}`;
-  x.fillText(hx.slice(0, 39), pad, h - pad - fs * 1.1);
-  x.fillText(hx.slice(40), pad, h - pad);
-  return out;
+  g.font = `${Math.round(fs * 0.8)}px ${MONO}`;
+  g.fillText(hx.slice(0, 39), pad, h - pad - fs * 1.1);
+  g.fillText(hx.slice(40), pad, h - pad);
+  return c;
 }

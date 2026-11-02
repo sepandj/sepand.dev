@@ -32,7 +32,8 @@
   .bar{position:fixed; left:0; right:0; bottom:0; display:flex; align-items:flex-end; justify-content:space-between;
     gap:12px; padding:16px max(16px,env(safe-area-inset-right)) max(14px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));
     pointer-events:none}
-  .mark{font-size:11px; letter-spacing:.12em; line-height:1.7; min-width:0}
+  .mark{font-size:11px; letter-spacing:.12em; line-height:1.7; min-width:0; padding:6px 10px; margin:-6px -10px;
+    border-radius:10px; background:color-mix(in srgb, var(--ground) 72%, transparent); -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px)}
   .mark b{font-weight:600; letter-spacing:.2em}
   .mark .once{display:block; opacity:.75; letter-spacing:.08em}
   .acts{display:flex; gap:8px; pointer-events:auto; flex-shrink:0}
@@ -86,9 +87,9 @@
   </button>
   <div class="note-in">
     <p>the moment you arrived, this page was made for you.</p>
-    <p>it grew from a fingerprint sealed to your visit and chained to every visit before it. no one else will be given this one, and you won't be given it again. come back and it will be something else.</p>
-    <p>every visit leaves the next one a little more intricate. once in a long while a rare one arrives, and everything after it changes.</p>
-    <p>the quiet circles the lines bend around are doors to the other things i make. each new one changes everything that comes after it.</p>
+    <p>every visit ever made here is one thread. they are drawn oldest first, and yours comes last, the bright one. its path comes from a fingerprint sealed to your visit and chained to every visit before it. no one else will be given it, and you won't be given it again.</p>
+    <p>so the weave only ever grows. once in a long while a rare visit arrives and opens a new era, with its own currents and colours, and every thread after it is different.</p>
+    <p>the circles the threads curl around are doors to the other things i make. each new door bends every thread that comes after it.</p>
     <p>keep it, or share it. the link will always open this one.</p>
     <p class="sig">sepand</p>
     <p class="fp" id="fp"></p>
@@ -125,10 +126,11 @@ try { state = await getState(); }
 catch (e) {
   missing = true;
   const hx = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, "0")).join("");
-  state = { n: 1, hash: hx, epoch_seed: hx, when: "", sites: [] };
+  state = { n: 1, hash: hx, epoch_seed: hx, when: "", sites: [], engine: 3 };
 }
 // Each visit is drawn by the engine it was made with, forever.
-const E = await import({ 1: "/static/art-v1.js", 2: "/static/art-v2.js" }[state.engine] || "/static/art.js");
+const E = await import({ 1: "/static/art-v1.js", 2: "/static/art-v2.js", 3: "/static/art-v3.js" }[state.engine] || "/static/art.js");
+if (E.prepare) await E.prepare(state);   // engine 4 draws the whole history
 const { LOOP, genome, createArt, renderCard, fmtHash } = E;
 const css = E.css || ((c, a = 1) => `rgba(${c.map(x => Math.round(x * 255)).join(",")},${a})`);
 const placeDoors = E.placeDoors || (() => []);
@@ -159,8 +161,8 @@ function start() {
   // Marks
   $("#mark").innerHTML = missing ? "<b>this visit does not exist.</b>"
     : `<b>no. ${state.n.toLocaleString("en-US")}</b>` + (mode === "view"
-      ? `<span class="once">someone's, on ${state.when.slice(0, 10)}.</span>`
-      : `<span class="once">yours alone. it won't come again.</span>`);
+      ? `<span class="once">${E.prepare ? "the bright thread was someone's, " : "someone's, "}on ${state.when.slice(0, 10)}.</span>`
+      : `<span class="once">${E.prepare ? "the bright thread is yours. it won't come again." : "yours alone. it won't come again."}</span>`);
   $("#fp").textContent = fmtHash(state.hash);
   if (mode === "view") $("#acts").insertAdjacentHTML("afterbegin", `<a class="btn" href="/">yours</a>`);
   $("#acts").hidden = false;
@@ -185,7 +187,7 @@ function start() {
   // tuned while the page fades in, then it stays put (a resize clears the
   // canvas, which is what made the start flicker).
   const dprMax = Math.min(devicePixelRatio || 1, 2);
-  let scale = innerWidth < 700 ? 0.6 : 0.8, frames = 0, acc = 0, last = performance.now(), tunes = 0, settled = false;
+  let scale = E.fixedScale ? 1 : innerWidth < 700 ? 0.6 : 0.8, frames = 0, acc = 0, last = performance.now(), tunes = 0, settled = !!E.fixedScale;
   function size() {
     if (!art) return;
     const w = Math.max(2, Math.round(innerWidth * dprMax * scale)), h = Math.max(2, Math.round(innerHeight * dprMax * scale));

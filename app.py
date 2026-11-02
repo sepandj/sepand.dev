@@ -65,7 +65,7 @@ CREATE INDEX IF NOT EXISTS visits_lz ON visits (lz);
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS sites jsonb;
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS engine int NOT NULL DEFAULT 1;
 """
-ENGINE = 3
+ENGINE = 4
 FIRST_SITES = [{"name": "not alone", "url": "https://notalone.sepand.dev"}]
 
 
@@ -226,6 +226,46 @@ def visit(request: Request):
     if limited(client_ip(request), 30):
         raise HTTPException(429)
     return mint()
+
+
+# ---- the whole history, compactly: what engine 4 draws ----
+# Per visit: the first 8 bytes of its hash and its epoch number. The past never
+# changes, so this only ever grows; one process serves it from memory.
+_chain = {"n": 0, "h": bytearray(), "e": bytearray(), "seeds": {}}
+
+
+def _chain_upto(n: int) -> None:
+    if n <= _chain["n"]:
+        return
+    with pool.connection() as c:
+        rows = c.execute("SELECT n, substring(hash from 1 for 8), epoch, epoch_seed FROM visits "
+                         "WHERE n > %s AND n <= %s ORDER BY n", (_chain["n"], n)).fetchall()
+    for vn, h8, ep, seed in rows:
+        if vn != _chain["n"] + 1:
+            break
+        _chain["h"] += bytes(h8)
+        _chain["e"] += int(ep).to_bytes(2, "big")
+        _chain["seeds"].setdefault(ep, bytes(seed).hex())
+        _chain["n"] = vn
+
+
+@app.get("/api/chain/{n}")
+def chain(n: int):
+    if n < 1 or n > 10_000_000:
+        raise HTTPException(404)
+    _chain_upto(n)
+    if n > _chain["n"]:
+        raise HTTPException(404)
+    return Response(
+        json.dumps({
+            "n": n,
+            "h": base64.b64encode(bytes(_chain["h"][: n * 8])).decode(),
+            "e": base64.b64encode(bytes(_chain["e"][: n * 2])).decode(),
+            "seeds": {str(k): v for k, v in _chain["seeds"].items() if k <= int.from_bytes(_chain["e"][n * 2 - 2: n * 2], "big")},
+        }),
+        media_type="application/json",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 @app.get("/api/v/{vid}")
