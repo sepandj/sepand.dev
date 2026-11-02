@@ -36,7 +36,10 @@ oldest first, with this visit's thread last and brightest.
   each site as one of the pours: thick, unmixed oil carrying its name
   (`art-v10.js`), 11 = the same with your pour shimmering and edged in light,
   the sites' pours as clear thick oil, and the ground under a thin runny slick
-  that pours slide on (`art.js`).
+  that pours slide on (`art-v11.js`), 12 = each site as a thick drop that pours
+  in at its place in the sequence, rides and slightly stretches with the flow as
+  a body the oil goes around, and rests when the pour ends; the ground grain and
+  slick are carried by the same currents (`art.js`).
 
 Runs in the not-alone container as user `sepandidx` (`deploy/sepand-index.service`,
 port 8001), database `sepandidx`, behind Caddy (`deploy/Caddyfile.snippet`).
