@@ -1,0 +1,15 @@
+# sepand.dev index. While in preview it is served at preview.sepand.dev;
+# when the root domain moves here, add "sepand.dev, www.sepand.dev" to this
+# site address list (www redirects to the bare domain).
+preview.sepand.dev {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8001
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+}

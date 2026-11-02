@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>sepand.dev</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="sepand.dev">
+<meta name="theme-color" content="#000000">
+<!--OG-->
+<style>
+  :root{
+    --fg:#fff; --mono:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0; height:100%; background:#000; color:var(--fg); overflow:hidden;
+    font-family:var(--mono); -webkit-font-smoothing:antialiased; -webkit-tap-highlight-color:transparent}
+  canvas#art{position:fixed; inset:0; width:100vw; height:100vh; height:100dvh; display:block}
+  .fallback{position:fixed; inset:0}
+
+  /* Floating doors to each site. White with a soft dark halo stays readable
+     over any colour the art turns into. */
+  .doors{position:fixed; inset:0; pointer-events:none}
+  .door{position:absolute; left:0; top:0; pointer-events:auto; color:#fff; text-decoration:none;
+    text-shadow:0 0 2px rgba(0,0,0,.55), 0 0 14px rgba(0,0,0,.45); font-weight:600;
+    font-size:clamp(15px,2.2vw,22px); letter-spacing:.18em; text-transform:lowercase; white-space:nowrap;
+    padding:14px 16px; will-change:transform; touch-action:manipulation}
+  .door::after{content:""; display:block; height:1px; background:currentColor; transform:scaleX(.0);
+    transform-origin:left; transition:transform .5s ease}
+  .door:hover::after,.door:focus-visible::after{transform:scaleX(1)}
+  .door:focus-visible{outline:1px solid #fff; outline-offset:2px}
+
+  .bar{position:fixed; left:0; right:0; bottom:0; display:flex; align-items:flex-end; justify-content:space-between;
+    gap:12px; padding:16px max(16px,env(safe-area-inset-right)) max(14px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));
+    color:#fff; pointer-events:none; text-shadow:0 0 2px rgba(0,0,0,.6), 0 0 10px rgba(0,0,0,.5)}
+  .mark{font-size:11px; letter-spacing:.12em; line-height:1.7; min-width:0}
+  .mark b{font-weight:600; letter-spacing:.2em}
+  .mark .h{display:block; opacity:.85; max-width:40ch}
+  .mark .h .full{display:inline} .mark .h .short{display:none}
+  .acts{display:flex; gap:8px; pointer-events:auto; flex-shrink:0}
+  .acts button,.acts a{font:inherit; font-size:12px; letter-spacing:.14em; color:#fff; background:transparent;
+    border:1px solid rgba(255,255,255,.7); border-radius:999px; min-height:44px; padding:0 16px; cursor:pointer;
+    background:rgba(0,0,0,.28); -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); text-shadow:none;
+    display:inline-flex; align-items:center; text-decoration:none}
+  .acts button:disabled{opacity:.35; cursor:default}
+  .toast{position:fixed; left:50%; bottom:calc(84px + env(safe-area-inset-bottom)); transform:translateX(-50%);
+    font-size:11px; letter-spacing:.12em; color:#fff; background:rgba(0,0,0,.45); padding:8px 14px; border-radius:999px;
+    opacity:0; transition:opacity .4s; pointer-events:none}
+  .toast.on{opacity:.9}
+  @media (max-width:620px){ .mark .h .full{display:none} .mark .h .short{display:inline} }
+  body.render .doors, body.render .bar, body.render .toast{display:none}
+</style>
+</head>
+<body>
+<canvas id="art" aria-hidden="true"></canvas>
+<nav class="doors" id="doors" aria-label="sites"></nav>
+<div class="bar">
+  <div class="mark" id="mark" aria-live="polite"></div>
+  <div class="acts" id="acts" hidden>
+    <button type="button" id="save" disabled>keep</button>
+    <button type="button" id="share" disabled>share</button>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script type="module">
+import { LOOP, genome, createArt, renderCard, fmtHash } from "/static/art.js";
+
+const $ = s => document.querySelector(s);
+const path = location.pathname;
+const mode = path.startsWith("/render/") ? "render" : path.startsWith("/v/") ? "view" : "live";
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+async function getState() {
+  if (mode === "live") {
+    const r = await fetch("/api/visit", { method: "POST" });
+    if (!r.ok) throw new Error("visit");
+    return r.json();
+  }
+  const id = path.split("/")[2];
+  const r = await fetch(`/api/v/${encodeURIComponent(id)}`);
+  if (!r.ok) throw new Error("missing");
+  return r.json();
+}
+
+function toast(t) {
+  const el = $("#toast"); el.textContent = t; el.classList.add("on");
+  clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("on"), 2200);
+}
+
+// ---- floating doors ----
+// Each door drifts on its own closed curve (whole-number frequencies), so
+// it is back where it started every loop.
+function doors(sites, H, theta0) {
+  const nav = $("#doors"), els = [];
+  const b = i => parseInt(H.slice((i * 2) % 64, (i * 2) % 64 + 2), 16) / 255;
+  sites.forEach((s, i) => {
+    const a = document.createElement("a");
+    a.className = "door"; a.href = s.url; a.textContent = s.name;
+    if (s.about) a.title = s.about;
+    nav.appendChild(a);
+    const k = 7 * i;
+    els.push({ a, cx: .2 + .6 * b(k), cy: .2 + .55 * b(k + 1), ax: .06 + .1 * b(k + 2), ay: .05 + .08 * b(k + 3),
+      mx: 1 + (H.charCodeAt(k % 64) % 2), my: 1 + (H.charCodeAt((k + 1) % 64) % 3), p: b(k + 4) * 6.283, q: b(k + 5) * 6.283 });
+  });
+  return theta => {
+    const W = innerWidth, Hh = innerHeight;
+    for (const d of els) {
+      const th = theta;
+      const w = d.a.offsetWidth, h = d.a.offsetHeight;
+      let x = (d.cx + d.ax * Math.sin(d.mx * th + d.p)) * W - w / 2;
+      let y = (d.cy + d.ay * Math.cos(d.my * th + d.q)) * Hh - h / 2;
+      x = Math.max(8, Math.min(W - w - 8, x));
+      y = Math.max(8, Math.min(Hh - h - 96, y));
+      d.a.style.transform = `translate3d(${x.toFixed(1)}px,${y.toFixed(1)}px,0)`;
+    }
+  };
+}
+
+// ---- main ----
+let state;
+try { state = await getState(); }
+catch (e) {
+  $("#mark").textContent = mode === "view" ? "this visit does not exist." : "";
+  // still show something: a quiet random field
+  state = { n: 1, hash: crypto.getRandomValues(new Uint8Array(32)).reduce((s, b) => s + b.toString(16).padStart(2, "0"), ""), epoch: 0, when: "" };
+  state.epoch_seed = state.hash;
+}
+const genes = genome(state);
+const theta0 = (parseInt(state.hash.slice(-6), 16) / 0xffffff) * Math.PI * 2;
+
+if (mode === "render") {
+  // Server-side preview images: one frame, handed back as a data URL.
+  document.body.classList.add("render");
+  const q = new URLSearchParams(location.search);
+  const w = +q.get("w") || 1200, h = +q.get("h") || 630;
+  window.__card = renderCard(state, genes, theta0, w, h).toDataURL("image/png");
+} else {
+  start();
+}
+
+function start() {
+  const canvas = $("#art");
+  let art = null;
+  try { art = createArt(canvas); } catch (e) { art = null; }
+  if (art) art.set(genes);
+  else {
+    // No WebGL: a still gradient in the same palette.
+    const c = t => "rgb(" + genes.uPa.map((a, i) => Math.round(255 * Math.min(1, Math.max(0, a + genes.uPb[i] * Math.cos(6.283 * (genes.uPc[i] * t + genes.uPd[i])))))).join(",") + ")";
+    canvas.outerHTML = `<div class="fallback" style="background:radial-gradient(circle at 40% 40%,${c(0)},${c(.33)} 45%,${c(.66)})"></div>`;
+  }
+
+  // Marks
+  const mark = $("#mark");
+  mark.innerHTML = `<b>no. ${state.n.toLocaleString("en-US")}</b>${mode === "view" ? " · " + state.when : ""}<span class="h"><span class="full">${fmtHash(state.hash.slice(0, 32))}<br>${fmtHash(state.hash.slice(32))}</span><span class="short">${fmtHash(state.hash.slice(0, 16))} …</span></span>`;
+  if (mode === "view") {
+    const acts = $("#acts");
+    acts.innerHTML = `<a href="/">yours</a>` + acts.innerHTML;
+  }
+  $("#acts").hidden = false;
+
+  let move = null;
+  fetch("/static/sites.json").then(r => r.json()).then(s => { move = doors(s, state.hash, theta0); }).catch(() => {});
+
+  // Resolution adapts to the device so the motion stays fluid.
+  const dprMax = Math.min(devicePixelRatio || 1, 2);
+  let scale = innerWidth < 700 ? 0.55 : 0.75, frames = 0, acc = 0, last = performance.now();
+  function size() {
+    if (!art) return;
+    const w = Math.max(2, Math.round(innerWidth * dprMax * scale)), h = Math.max(2, Math.round(innerHeight * dprMax * scale));
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  }
+  addEventListener("resize", size); size();
+
+  // Reduced motion: the same loop, four times slower.
+  const loop = reduce ? LOOP * 4 : LOOP;
+  const t0 = performance.now() / 1000 - (theta0 / (Math.PI * 2)) * loop;
+  let running = true;
+  document.addEventListener("visibilitychange", () => {
+    running = !document.hidden; if (running) { last = performance.now(); requestAnimationFrame(tick); }
+  });
+  function theta(now) { return (((now / 1000 - t0) % loop) / loop) * Math.PI * 2; }
+  function tick(now) {
+    if (!running) return;
+    const th = theta(now);
+    if (art) {
+      art.draw(th);
+      const dt = now - last; last = now; acc += dt; frames++;
+      if (frames === 40) {
+        const avg = acc / frames;
+        if (avg > 24 && scale > 0.3) { scale *= 0.85; size(); }
+        else if (avg < 13 && scale < 1) { scale = Math.min(1, scale * 1.1); size(); }
+        frames = 0; acc = 0;
+      }
+    }
+    if (move) move(th);
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  // ---- keep / share ----
+  const url = `${location.origin}/v/${state.id}`;
+  const portrait = innerHeight >= innerWidth;
+  let blob = null;
+  function card() {
+    if (blob) return Promise.resolve(blob);
+    const [w, h] = portrait ? [1080, 1350] : [1600, 1000];
+    const c = renderCard(state, genes, theta(performance.now()), w, h);
+    return new Promise(res => c.toBlob(b => { blob = b; res(b); }, "image/png"));
+  }
+  const name = `sepand-dev-${state.n}.png`;
+  $("#save").disabled = $("#share").disabled = !state.id;
+  $("#save").addEventListener("click", async () => {
+    const b = await card(), a = document.createElement("a");
+    a.href = URL.createObjectURL(b); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  });
+  $("#share").addEventListener("click", async () => {
+    try {
+      const b = await card(), file = new File([b], name, { type: "image/png" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], url, text: url });
+      else if (navigator.share) await navigator.share({ url });
+      else { await navigator.clipboard.writeText(url); toast("link copied"); }
+    } catch (e) {
+      if (e && e.name === "AbortError") return;
+      try { await navigator.clipboard.writeText(url); toast("link copied"); } catch (_) { toast(url); }
+    }
+  });
+}
+</script>
+</body>
+</html>
