@@ -59,16 +59,29 @@
   .bang{position:fixed; z-index:3; top:max(14px,env(safe-area-inset-top)); right:max(14px,env(safe-area-inset-right));
     width:44px; padding:0; font-weight:600; font-size:16px}
 
-  .note{position:fixed; inset:0; z-index:4; display:grid; place-items:center; padding:24px;
+  /* The note scrolls on its own when it is taller than the screen. */
+  .note{position:fixed; inset:0; z-index:4; display:block; overflow-y:auto; -webkit-overflow-scrolling:touch;
+    overscroll-behavior:contain; padding:0 24px;
     background:color-mix(in srgb, var(--ground) 88%, transparent); -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);
     opacity:0; transition:opacity .35s ease}
   .note.on{opacity:1}
-  .note-in{max-width:30rem; font-size:14px; line-height:1.85; letter-spacing:.02em}
+  .note-in{max-width:30rem; margin:0 auto; font-size:14px; line-height:1.85; letter-spacing:.02em;
+    min-height:100%; display:flex; flex-direction:column; justify-content:center;
+    padding:calc(max(14px,env(safe-area-inset-top)) + 64px) 0 calc(max(14px,env(safe-area-inset-bottom)) + 40px)}
   .note-in p{margin:0 0 1.1em}
   .note-in .fp{margin-top:1.6em; font-size:11px; letter-spacing:.1em; opacity:.6; word-spacing:.2em}
   .note-in .sig{opacity:.6}
-  .note .x{position:absolute; top:max(14px,env(safe-area-inset-top)); right:max(14px,env(safe-area-inset-right)); width:44px; padding:0}
+  .note .x{position:fixed; z-index:5; top:max(14px,env(safe-area-inset-top)); right:max(14px,env(safe-area-inset-right)); width:44px; padding:0}
   .note .x svg{width:14px; height:14px}
+
+  /* Pull down to refresh: the page itself never scrolls, so it has its own. */
+  .pull{position:fixed; z-index:6; left:50%; top:max(10px,env(safe-area-inset-top)); width:40px; height:40px; margin-left:-20px;
+    border-radius:50%; display:grid; place-items:center; color:var(--ink);
+    background:color-mix(in srgb, var(--ground) 80%, transparent); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+    opacity:0; transform:translateY(-60px); pointer-events:none}
+  .pull svg{width:24px; height:24px; transform:rotate(-90deg)}
+  .pull.go svg{animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(270deg)}}
   /* Nothing shows until the first frame is drawn in the visit's own colours,
      then it all fades in together. */
   #art,.doors,.bar,.bang{opacity:0; transition:opacity 1.4s ease}
@@ -87,6 +100,8 @@
   </div>
 </div>
 <div class="toast" id="toast" role="status"></div>
+<div class="pull" id="pull" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+  <circle cx="12" cy="12" r="9" opacity=".25"></circle><circle id="pullArc" cx="12" cy="12" r="9" stroke-dasharray="56.5" stroke-dashoffset="56.5"></circle></svg></div>
 <button class="btn bang" id="bang" type="button" aria-label="what is this" aria-haspopup="dialog">!</button>
 <div class="note" id="note" role="dialog" aria-modal="true" aria-label="what is this" hidden>
   <button class="btn x" id="noteX" type="button" aria-label="close">
@@ -265,6 +280,36 @@ function start() {
   }
   requestAnimationFrame(tick);
   if (!art) document.body.classList.add("ready");
+
+  // ---- pull down to refresh ----
+  // The page is locked still (so the art doesn't move under your finger),
+  // which also turns off the phone's own pull-to-refresh. This is ours:
+  // drag down, the ring fills; let go once it's full and the page reloads.
+  {
+    const pull = $("#pull"), arc = $("#pullArc"), FULL = 110;
+    let y0 = null, dy = 0;
+    const show = d => {
+      const k = Math.min(1, d / FULL);
+      pull.style.opacity = String(Math.min(1, d / 40));
+      pull.style.transform = `translateY(${(Math.min(d, FULL) * 0.6 - 10).toFixed(1)}px)`;
+      arc.style.strokeDashoffset = String(56.5 * (1 - k));
+    };
+    addEventListener("touchstart", e => {
+      if (e.touches.length !== 1 || !$("#note").hidden || e.target.closest("a,button")) { y0 = null; return; }
+      y0 = e.touches[0].clientY; dy = 0;
+    }, { passive: true });
+    addEventListener("touchmove", e => {
+      if (y0 === null) return;
+      dy = Math.max(0, e.touches[0].clientY - y0);
+      show(dy);
+    }, { passive: true });
+    addEventListener("touchend", () => {
+      if (y0 === null) return;
+      y0 = null;
+      if (dy >= FULL) { pull.classList.add("go"); setTimeout(() => location.reload(), 150); }
+      else { pull.style.transition = "opacity .25s, transform .25s"; show(0); setTimeout(() => (pull.style.transition = ""), 260); }
+    });
+  }
 
   // ---- the "!" ----
   const note = $("#note"), bang = $("#bang");
