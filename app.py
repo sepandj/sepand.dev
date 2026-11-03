@@ -65,9 +65,10 @@ CREATE INDEX IF NOT EXISTS visits_lz ON visits (lz);
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS sites jsonb;
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS engine int NOT NULL DEFAULT 1;
 """
-# Engine 15 (static/art.js) is engine 13 with the black hole pulling the oil in.
-# Engine 14 (art-v14.js) was tried and reverted, and only draws its own visits.
-ENGINE = 15
+# Engine 16 (static/art.js) is engine 13 with each letter of the black hole
+# pulling the oil in. Engines 14 and 15 were tried and replaced; their files
+# (art-v14.js, art-v15.js) only draw their own visits.
+ENGINE = 16
 FIRST_SITES = [{"name": "not alone", "url": "https://notalone.sepand.dev"}]
 
 

@@ -1,5 +1,4 @@
-// sepand.dev, engine 15: the history, poured as oil on a thin running slick,
-// with a black hole in it.
+// sepand.dev, engine 16: the history, poured as oil on a thin running slick.
 //
 // Every visit that has ever happened is a thin stream of coloured oil, poured
 // along a path its hash chooses. A fluid simulation carries it: heavy, damped,
@@ -14,10 +13,9 @@
 // it comes to rest where the flow leaves it. It carries the site's name.
 // The whole history is replayed oldest first; yours pours last and shimmers.
 // Then the oil rests, and only the light moves, on a loop.
-// The black hole's name sits inside a horizon. As the history pours, the oil
-// around it starts to circle and fall in, and whatever crosses the horizon is
-// gone. Light from behind it is bent around it, so the surface near it is
-// stretched into arcs. Your own pour is never taken.
+// Every letter of the black hole's name pulls: the oil near each one starts to
+// circle it and fall towards it, following the letter's own shape, and what
+// reaches its edge is swallowed. Your own pour is never taken.
 
 export const LOOP = 60; // seconds for the light to come back around
 export const MAX_SITES = 8;
@@ -165,6 +163,43 @@ function nameMask(doors, size, toSim, M) {
   return c;
 }
 
+// The black hole's letters as a gravity field over the square simulation, in
+// the same place and shape as they are drawn. r: close to the letters (their
+// edges), g: the pull, their shapes blurred at a few scales and added.
+function blur(a, n, s) {
+  const r = Math.ceil(s * 3), k = [];
+  let sum = 0;
+  for (let i = -r; i <= r; i++) { const w = Math.exp(-i * i / (2 * s * s)); k.push(w); sum += w; }
+  const kk = k.map(w => w / sum), t = new Float32Array(n * n), o = new Float32Array(n * n);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    let v = 0; for (let i = -r; i <= r; i++) { const xx = x + i; if (xx >= 0 && xx < n) v += a[y * n + xx] * kk[i + r]; } t[y * n + x] = v;
+  }
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    let v = 0; for (let i = -r; i <= r; i++) { const yy = y + i; if (yy >= 0 && yy < n) v += t[yy * n + x] * kk[i + r]; } o[y * n + x] = v;
+  }
+  return o;
+}
+function letterField(door, toSim, M, n = 256) {
+  const c = document.createElement("canvas"); c.width = c.height = n;
+  const g = c.getContext("2d");
+  g.fillStyle = "#000"; g.fillRect(0, 0, n, n);
+  const [u, v] = toSim(door.x, door.y), px = door.px / M * n;
+  g.save(); g.translate(u * n, (1 - v) * n); g.rotate(door.angle);
+  g.font = `600 ${px}px ${MONO}`; g.textAlign = "center"; g.textBaseline = "middle";
+  if ("letterSpacing" in g) g.letterSpacing = `${px * 0.18}px`;
+  g.fillStyle = "#fff"; g.fillText(door.name, 0, 0);
+  g.restore();
+  const img = g.getImageData(0, 0, n, n).data, a = new Float32Array(n * n);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) a[(n - 1 - y) * n + x] = img[(y * n + x) * 4] / 255;   // row 0 = bottom
+  const near = blur(a, n, 1.6), b1 = blur(a, n, 4), b2 = blur(a, n, 11), b3 = blur(a, n, 28);
+  let mx = 0;
+  const far = new Float32Array(n * n);
+  for (let i = 0; i < n * n; i++) { far[i] = b1[i] + 0.7 * b2[i] + 0.5 * b3[i]; mx = Math.max(mx, far[i]); }
+  const data = new Float32Array(n * n * 2);
+  for (let i = 0; i < n * n; i++) { data[i * 2] = Math.min(1, near[i] * 1.6); data[i * 2 + 1] = far[i] / (mx || 1); }
+  return { n, data };
+}
+
 // ---- shaders ---------------------------------------------------------------------
 
 const VS = `#version 300 es
@@ -187,12 +222,14 @@ bool inBody(vec2 p){
   return false;
 }
 bool inName(vec2 p){ return texture(uMask, p).r > 0.5 || inBody(p); }
-// The black hole: a horizon around its name, centre xy, half-axes zw (zero
-// when there is none), x axis uSinkE. uSinkK: how hard it pulls (0 to 1).
-uniform vec4 uSink; uniform vec2 uSinkE; uniform float uSinkK;
-vec2 sinkQ(vec2 p){ vec2 d = p - uSink.xy; return vec2(dot(d, uSinkE), dot(d, vec2(-uSinkE.y, uSinkE.x))) / uSink.zw; }
-// outward normal of the horizon's family of ovals at p
-vec2 sinkN(vec2 q){ return normalize(uSinkE * (q.x / uSink.z) + vec2(-uSinkE.y, uSinkE.x) * (q.y / uSink.w) + 1e-7); }
+// The black hole's letters as a gravity field: r = right at their edges,
+// g = the pull, the letters' shapes blurred at a few scales (0 when there is none).
+uniform sampler2D uPot; uniform float uSinkK, uSinkOn;
+vec2 potG(vec2 p){
+  const float e = 1.0 / 256.0;
+  return vec2(texture(uPot, p + vec2(e, 0)).g - texture(uPot, p - vec2(e, 0)).g,
+              texture(uPot, p + vec2(0, e)).g - texture(uPot, p - vec2(0, e)).g) / (2.0 * e);
+}
 // Yours (r) and the sites' pours (b) are thick and keep to themselves.
 float locked(vec2 p){ vec4 m = texture(uMarks, p); return smoothstep(0.3, 0.6, max(m.r, m.b)); }
 `;
@@ -248,11 +285,8 @@ void main(){
   else if (uKind < 3.5) f = normalize(d + 1e-4) * 0.9 + c;
   else                  f = c * 1.3;
   v += f * uAmt;
-  // The black hole sets the oil around it circling.
-  if (uSink.z > 0.0) {
-    vec2 q = sinkQ(vUv); float r = length(q); vec2 n = sinkN(q);
-    v += uSinkK * vec2(-n.y, n.x) * 0.045 * exp(-max(r - 1.0, 0.0) * 0.9) / max(r, 0.6) * (1.0 - locked(vUv));
-  }
+  // Around each letter of the black hole the oil starts to circle.
+  if (uSinkOn > 0.5) { vec2 g = potG(vUv); v += uSinkK * vec2(-g.y, g.x) * 0.0016 * (1.0 - locked(vUv)); }
   if (inName(vUv)) v = vec2(0.0);
   o = vec4(v, 0.0, 1.0);
 }`;
@@ -334,20 +368,23 @@ void main(){
   float L = texture(uP, vUv - vec2(uTexel.x, 0)).x, R = texture(uP, vUv + vec2(uTexel.x, 0)).x;
   float B = texture(uP, vUv - vec2(0, uTexel.y)).x, T = texture(uP, vUv + vec2(0, uTexel.y)).x;
   vec2 v = texture(uVel, vUv).xy - vec2(R - L, T - B);
-  // ...and falling in. Added after the pressure step, which would otherwise undo it.
-  if (uSink.z > 0.0) {
-    vec2 q = sinkQ(vUv); float r = length(q);
-    v -= uSinkK * sinkN(q) * 0.5 * exp(-max(r - 1.0, 0.0) * 1.6) / max(r, 0.6) * (1.0 - locked(vUv));
+  // ...and falls towards it. Added after the pressure step, which would otherwise undo it.
+  if (uSinkOn > 0.5) {
+    vec2 g = potG(vUv) * 0.035;
+    float l = length(g);
+    if (l > 1.1) g *= 1.1 / l;
+    v += uSinkK * g * (1.0 - locked(vUv));
   }
   o = vec4(inName(vUv) ? vec2(0.0) : v, 0.0, 1.0);
 }`;
 
-// Whatever crosses the horizon is gone.
+// What reaches a letter of the black hole is swallowed.
 const SINK = HEAD + `
 uniform sampler2D uSrc;
 void main(){
   vec4 d = texture(uSrc, vUv);
-  if (uSink.z > 0.0) d *= 1.0 - 0.2 * smoothstep(1.06, 0.94, length(sinkQ(vUv))) * uSinkK * (1.0 - locked(vUv));
+  float near = texture(uPot, vUv).r;
+  d *= 1.0 - 0.25 * smoothstep(0.1, 0.35, near) * uSinkK * (1.0 - locked(vUv));
   o = d;
 }`;
 
@@ -390,7 +427,7 @@ vec3 ground(vec2 p){
 }
 uniform vec4 uDropC[${MAX_SITES}], uDropF[${MAX_SITES}]; uniform int uDropN;
 float T(vec2 p){ return texture(uDye, p).a; }
-vec3 shade(vec2 uv, vec2 muv){
+vec3 shade(vec2 uv){
   vec4 d = texture(uDye, uv);
   d.rgb = d.a > 1e-4 ? clamp(d.rgb / d.a, 0.0, 1.0) : uGround;
   float t = d.a;
@@ -451,39 +488,14 @@ vec3 shade(vec2 uv, vec2 muv){
   float mw = max(fwidth(marks.r), 1e-4);
   col += film2 * (1.0 - smoothstep(0.0, 2.0 * uPx, abs(marks.r - 0.5) / mw)) * 0.9;
   // The names: set into the surface, the oil heaped against their sides.
-  vec4 mk = texture(uMask, muv);
+  vec4 mk = texture(uMask, uv);
   col += cover * mk.g * (1.0 - mk.r) * 0.18;
   col = mix(col, uInk, smoothstep(0.35, 0.65, mk.r));
   return col;
 }
 void main(){
   vec2 uv = uCrop.xy + vUv * uCrop.zw;
-  // Light passing the black hole is bent: a point lens in the horizon's own
-  // (stretched) frame, its ring just outside the horizon.
-  vec2 suv = uv; float hole = 0.0, ring = 0.0;
-  if (uSink.z > 0.0) {
-    vec2 q = sinkQ(uv); float r = length(q);
-    if (r > 1.0) {
-      vec2 d = q * (1.0 - 0.8 / (r * r)) * uSink.zw;
-      suv = uSink.xy + uSinkE * d.x + vec2(-uSinkE.y, uSinkE.x) * d.y;
-    }
-    float w = fwidth(r);
-    hole = 1.0 - smoothstep(1.0 - w, 1.0 + w, r);
-    ring = exp(-pow((r - 1.03) / max(0.018, 1.5 * w), 2.0));
-  }
-  vec3 col = shade(suv, uv);
-  if (uSink.z > 0.0) {
-    vec3 deep = uDark > 0.5 ? vec3(0.0) : uGround * 0.07;
-    float r = length(sinkQ(uv));
-    // just outside, the surface is dimmed where its light is bent away
-    col *= 1.0 - 0.32 * exp(-max(r - 1.0, 0.0) / 0.1) * (1.0 - hole);
-    col = mix(col, deep, hole);
-    // a thin bright ring of light that went round it
-    col = mix(col, vec3(1.0), ring * (uDark > 0.5 ? 0.55 : 0.85) * (1.0 - hole));
-    // its name, lit against the dark
-    float mk = smoothstep(0.35, 0.65, texture(uMask, uv).r);
-    col = mix(col, uDark > 0.5 ? uInk : uGround, mk * hole);
-  }
+  vec3 col = shade(uv);
   vec3 L = normalize(vec3(cos(uTh) * 0.5, sin(uTh) * 0.5 + 0.3, 1.0)), H = normalize(L + vec3(0, 0, 1));
   // The sites: thick clear drops of the same oil, stretched by the flow they
   // rode in. Each magnifies and bends what lies beneath it.
@@ -496,7 +508,7 @@ void main(){
       float z = sqrt(1.0 - r * r);
       vec3 N = normalize(vec3(q * 0.9, z));
       vec2 seen = c + (uv - c) * (0.45 + 0.25 * r * r) - N.xy * R * 0.12;
-      col = shade(seen, seen) * 0.95 + uInk * 0.03;
+      col = shade(seen) * 0.95 + uInk * 0.03;
       float nh = max(dot(N, H), 0.0);
       col += pow(nh, 140.0) * 1.1 + pow(nh, 18.0) * 0.08 + pow(1.0 - z, 3.0) * 0.3;
       col *= 1.0 - 0.3 * smoothstep(0.9, 1.0, r);
@@ -543,8 +555,13 @@ function sim(canvas, opts) {
   const dye = pair(SD, SD, gl.RGBA16F, gl.RGBA), hat = tex(SD, SD, gl.RGBA16F, gl.RGBA), back = tex(SD, SD, gl.RGBA16F, gl.RGBA);
   const mine = pair(SM, SM, gl.RGBA16F, gl.RGBA);
   const gco = pair(SM, SM, gl.RGBA16F, gl.RGBA);
-  let bodies = [], sink = null;
+  let bodies = [], sinkOn = false, sinkK = 0;
   const mask = gl.createTexture();
+  const pot = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, pot);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG16F, 1, 1, 0, gl.RG, gl.FLOAT, new Float32Array(2));
   const probeT = tex(40, 1, gl.RGBA16F, gl.RGBA), probeBuf = new Float32Array(160);
   const DM = 96, dmapT = tex(DM, DM, gl.RGBA16F, gl.RGBA), dmapBuf = new Float32Array(DM * DM * 4);
 
@@ -557,8 +574,8 @@ function sim(canvas, opts) {
     bodies.forEach((b, i) => { B.set([b.c[0], b.c[1], b.R, 0], i * 4); BF.set(b.inv, i * 4); });
     gl.uniform4fv(prog.u("uBody[0]"), B); gl.uniform4fv(prog.u("uBodyF[0]"), BF); gl.uniform1i(prog.u("uBodyN"), bodies.length);
     gl.uniform1i(prog.u("uMarks"), bindT(6, mine.r.t));
-    gl.uniform4fv(prog.u("uSink"), sink ? [sink.c[0], sink.c[1], sink.A, sink.B] : [0, 0, 0, 0]);
-    gl.uniform2fv(prog.u("uSinkE"), sink ? sink.e : [1, 0]); gl.uniform1f(prog.u("uSinkK"), sink ? sink.k : 0);
+    gl.uniform1i(prog.u("uPot"), bindT(5, pot));
+    gl.uniform1f(prog.u("uSinkOn"), sinkOn ? 1 : 0); gl.uniform1f(prog.u("uSinkK"), sinkK);
     set(prog);
     if (target) { gl.bindFramebuffer(gl.FRAMEBUFFER, target.fb); gl.viewport(0, 0, target.w, target.h); }
     else { gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, canvas.width, canvas.height); }
@@ -620,7 +637,7 @@ function sim(canvas, opts) {
         run(P.spread, dye.w, pr => { gl.uniform1i(pr.u("uSrc"), bindT(0, dye.r.t)); gl.uniform2f(pr.u("uTexel"), 1 / SD, 1 / SD);
           gl.uniform1f(pr.u("uK"), 0.02); gl.uniform4fv(pr.u("uEmpty"), empty()); }); dye.swap();
       }
-      if (sink && sink.k > 0) { run(P.sink, dye.w, pr => { gl.uniform1i(pr.u("uSrc"), bindT(0, dye.r.t)); }); dye.swap(); }
+      if (sinkOn && sinkK > 0) { run(P.sink, dye.w, pr => { gl.uniform1i(pr.u("uSrc"), bindT(0, dye.r.t)); }); dye.swap(); }
     },
     // How much of each screen cell (DM x DM over the visible crop) is a site's pour.
     doorMap(crop) {
@@ -629,7 +646,14 @@ function sim(canvas, opts) {
       return { n: DM, v: i => dmapBuf[i * 4] };
     },
     setBodies(b) { bodies = b; },
-    setSink(x) { sink = x; },
+    // field: { n, data: Float32Array(n * n * 2) } or null
+    setSink(field) {
+      sinkOn = !!field;
+      gl.bindTexture(gl.TEXTURE_2D, pot);
+      if (field) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG16F, field.n, field.n, 0, gl.RG, gl.FLOAT, field.data);
+      else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG16F, 1, 1, 0, gl.RG, gl.FLOAT, new Float32Array(2));
+    },
+    setSinkK(k) { sinkK = k; },
     // Current (in uv per step) at up to 40 points.
     probe(pts) {
       const flat = new Float32Array(80); pts.forEach((q, i) => flat.set(q, i * 2));
@@ -694,14 +718,9 @@ function plan(state, doors, W, H, maxPours = MAX_POURS) {
     return { i, E, r, path, metal, amt: mine ? 1.7 : 1.1 };
   };
   const streams = idx.map(i => stream(i, false));
-  // The black hole: an oval horizon a little bigger than its name, rounder than the text.
   const bh = doors.find(d => /^https:\/\/blackhole\./.test(d.url || ""));
-  let sink = null;
-  if (bh) {
-    const A = (bh.w / 2 + 14) / M, B = Math.max(bh.h / 2 + 14, (bh.w / 2 + 14) * 0.52) / M;
-    sink = { c: toSim(bh.x, bh.y), A, B, e: [Math.cos(bh.angle), -Math.sin(bh.angle)], k: 0 };
-  }
-  return { n, crop, M, W, H, doors, toSim, mask: nameMask(doors, 1024, toSim, M), streams, mine: stream(n - 1, true), sink };
+  return { n, crop, M, W, H, doors, toSim, mask: nameMask(doors, 1024, toSim, M), streams, mine: stream(n - 1, true),
+           field: bh ? letterField(bh, toSim, M) : null };
 }
 
 // ---- live: the pour, watched ---------------------------------------------------------
@@ -773,7 +792,7 @@ export function createArt(canvas, opts = {}) {
       k = 0; drop = 0; done = false; mineDrop = -1; stepN = 0; doorAt = [];
       drops = P.doors.map(d => ({ d, c: P.toSim(d.x, d.y), R: 0, full: d.rPx / P.M, on: false, F: [1, 0, 0, 1], inv: [1, 0, 0, 1] }));
       S.setBodies([]);
-      S.setSink(P.sink);
+      S.setSink(P.field); S.setSinkK(0);
       const total = P.streams.reduce((s, x) => s + x.path.length, 0);
       const seconds = clamp(6 + 1.6 * Math.log2(P.streams.length + 1), 7, 18);
       perFrame = reduce ? 1e9 : Math.max(1, Math.ceil(total / (seconds * 60)));
@@ -785,7 +804,7 @@ export function createArt(canvas, opts = {}) {
         if (k < P.streams.length) {
           const s = P.streams[k], p = s.path[drop];
           // it wakes as the pouring starts and pulls harder as the history goes on
-          if (P.sink) P.sink.k = clamp(0.15 + 0.85 * k / Math.max(1, P.streams.length * 0.3), 0, 1);
+          if (P.field) S.setSinkK(clamp(0.15 + 0.85 * k / Math.max(1, P.streams.length * 0.3), 0, 1));
           if (drop === 0 && onVisit && s.i >= 0) onVisit(s.i + 1);
           if (s.door) {
             // A site's drop pours in: it grows as its drops land, then the
@@ -797,7 +816,7 @@ export function createArt(canvas, opts = {}) {
           stepAll(s.E, 0.012);
           if (++drop >= s.path.length) { drop = 0; k++; }
         } else if (mineDrop < 0) {
-          if (P.sink) P.sink.k = 1;
+          if (P.field) S.setSinkK(1);
           mineDrop = 0; if (onVisit) onVisit(P.n);
           if (!all) return;
         } else if (mineDrop < MINE_DROPS + SETTLE) {
