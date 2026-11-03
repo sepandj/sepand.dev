@@ -1,4 +1,5 @@
-// sepand.dev, engine 14: the history, poured as oil on a thin running slick.
+// sepand.dev, engine 15: the history, poured as oil on a thin running slick,
+// with a black hole in it.
 //
 // Every visit that has ever happened is a thin stream of coloured oil, poured
 // along a path its hash chooses. A fluid simulation carries it: heavy, damped,
@@ -13,6 +14,10 @@
 // it comes to rest where the flow leaves it. It carries the site's name.
 // The whole history is replayed oldest first; yours pours last and shimmers.
 // Then the oil rests, and only the light moves, on a loop.
+// The black hole's name sits inside a horizon. As the history pours, the oil
+// around it starts to circle and fall in, and whatever crosses the horizon is
+// gone. Light from behind it is bent around it, so the surface near it is
+// stretched into arcs. Your own pour is never taken.
 
 export const LOOP = 60; // seconds for the light to come back around
 export const MAX_SITES = 8;
@@ -182,6 +187,12 @@ bool inBody(vec2 p){
   return false;
 }
 bool inName(vec2 p){ return texture(uMask, p).r > 0.5 || inBody(p); }
+// The black hole: a horizon around its name, centre xy, half-axes zw (zero
+// when there is none), x axis uSinkE. uSinkK: how hard it pulls (0 to 1).
+uniform vec4 uSink; uniform vec2 uSinkE; uniform float uSinkK;
+vec2 sinkQ(vec2 p){ vec2 d = p - uSink.xy; return vec2(dot(d, uSinkE), dot(d, vec2(-uSinkE.y, uSinkE.x))) / uSink.zw; }
+// outward normal of the horizon's family of ovals at p
+vec2 sinkN(vec2 q){ return normalize(uSinkE * (q.x / uSink.z) + vec2(-uSinkE.y, uSinkE.x) * (q.y / uSink.w) + 1e-7); }
 // Yours (r) and the sites' pours (b) are thick and keep to themselves.
 float locked(vec2 p){ vec4 m = texture(uMarks, p); return smoothstep(0.3, 0.6, max(m.r, m.b)); }
 `;
@@ -223,7 +234,7 @@ void main(){
   vec2 v = texture(uVel, vUv).xy;
   vec2 nb = (texture(uVel, vUv + vec2(uTexel.x, 0)).xy + texture(uVel, vUv - vec2(uTexel.x, 0)).xy
            + texture(uVel, vUv + vec2(0, uTexel.y)).xy + texture(uVel, vUv - vec2(0, uTexel.y)).xy) * 0.25;
-  v = mix(v, nb, 0.35) * uDamp;                   // a thin oil: little internal friction
+  v = mix(v, nb, 0.55) * uDamp;
   v *= 1.0 - 0.85 * locked(vUv);                  // the thick pours barely move
   // Gravity: oil runs from where it is deep to where it is shallow.
   float aL = texture(uDye, vUv - vec2(uTexel.x, 0)).a, aR = texture(uDye, vUv + vec2(uTexel.x, 0)).a;
@@ -237,6 +248,11 @@ void main(){
   else if (uKind < 3.5) f = normalize(d + 1e-4) * 0.9 + c;
   else                  f = c * 1.3;
   v += f * uAmt;
+  // The black hole sets the oil around it circling.
+  if (uSink.z > 0.0) {
+    vec2 q = sinkQ(vUv); float r = length(q); vec2 n = sinkN(q);
+    v += uSinkK * vec2(-n.y, n.x) * 0.045 * exp(-max(r - 1.0, 0.0) * 0.9) / max(r, 0.6) * (1.0 - locked(vUv));
+  }
   if (inName(vUv)) v = vec2(0.0);
   o = vec4(v, 0.0, 1.0);
 }`;
@@ -318,7 +334,21 @@ void main(){
   float L = texture(uP, vUv - vec2(uTexel.x, 0)).x, R = texture(uP, vUv + vec2(uTexel.x, 0)).x;
   float B = texture(uP, vUv - vec2(0, uTexel.y)).x, T = texture(uP, vUv + vec2(0, uTexel.y)).x;
   vec2 v = texture(uVel, vUv).xy - vec2(R - L, T - B);
+  // ...and falling in. Added after the pressure step, which would otherwise undo it.
+  if (uSink.z > 0.0) {
+    vec2 q = sinkQ(vUv); float r = length(q);
+    v -= uSinkK * sinkN(q) * 0.5 * exp(-max(r - 1.0, 0.0) * 1.6) / max(r, 0.6) * (1.0 - locked(vUv));
+  }
   o = vec4(inName(vUv) ? vec2(0.0) : v, 0.0, 1.0);
+}`;
+
+// Whatever crosses the horizon is gone.
+const SINK = HEAD + `
+uniform sampler2D uSrc;
+void main(){
+  vec4 d = texture(uSrc, vUv);
+  if (uSink.z > 0.0) d *= 1.0 - 0.2 * smoothstep(1.06, 0.94, length(sinkQ(vUv))) * uSinkK * (1.0 - locked(vUv));
+  o = d;
 }`;
 
 // The sites' pours, shrunk to a small grid so their shapes can be found.
@@ -360,7 +390,7 @@ vec3 ground(vec2 p){
 }
 uniform vec4 uDropC[${MAX_SITES}], uDropF[${MAX_SITES}]; uniform int uDropN;
 float T(vec2 p){ return texture(uDye, p).a; }
-vec3 shade(vec2 uv){
+vec3 shade(vec2 uv, vec2 muv){
   vec4 d = texture(uDye, uv);
   d.rgb = d.a > 1e-4 ? clamp(d.rgb / d.a, 0.0, 1.0) : uGround;
   float t = d.a;
@@ -421,14 +451,39 @@ vec3 shade(vec2 uv){
   float mw = max(fwidth(marks.r), 1e-4);
   col += film2 * (1.0 - smoothstep(0.0, 2.0 * uPx, abs(marks.r - 0.5) / mw)) * 0.9;
   // The names: set into the surface, the oil heaped against their sides.
-  vec4 mk = texture(uMask, uv);
+  vec4 mk = texture(uMask, muv);
   col += cover * mk.g * (1.0 - mk.r) * 0.18;
   col = mix(col, uInk, smoothstep(0.35, 0.65, mk.r));
   return col;
 }
 void main(){
   vec2 uv = uCrop.xy + vUv * uCrop.zw;
-  vec3 col = shade(uv);
+  // Light passing the black hole is bent: a point lens in the horizon's own
+  // (stretched) frame, its ring just outside the horizon.
+  vec2 suv = uv; float hole = 0.0, ring = 0.0;
+  if (uSink.z > 0.0) {
+    vec2 q = sinkQ(uv); float r = length(q);
+    if (r > 1.0) {
+      vec2 d = q * (1.0 - 0.8 / (r * r)) * uSink.zw;
+      suv = uSink.xy + uSinkE * d.x + vec2(-uSinkE.y, uSinkE.x) * d.y;
+    }
+    float w = fwidth(r);
+    hole = 1.0 - smoothstep(1.0 - w, 1.0 + w, r);
+    ring = exp(-pow((r - 1.03) / max(0.018, 1.5 * w), 2.0));
+  }
+  vec3 col = shade(suv, uv);
+  if (uSink.z > 0.0) {
+    vec3 deep = uDark > 0.5 ? vec3(0.0) : uGround * 0.07;
+    float r = length(sinkQ(uv));
+    // just outside, the surface is dimmed where its light is bent away
+    col *= 1.0 - 0.32 * exp(-max(r - 1.0, 0.0) / 0.1) * (1.0 - hole);
+    col = mix(col, deep, hole);
+    // a thin bright ring of light that went round it
+    col = mix(col, vec3(1.0), ring * (uDark > 0.5 ? 0.55 : 0.85) * (1.0 - hole));
+    // its name, lit against the dark
+    float mk = smoothstep(0.35, 0.65, texture(uMask, uv).r);
+    col = mix(col, uDark > 0.5 ? uInk : uGround, mk * hole);
+  }
   vec3 L = normalize(vec3(cos(uTh) * 0.5, sin(uTh) * 0.5 + 0.3, 1.0)), H = normalize(L + vec3(0, 0, 1));
   // The sites: thick clear drops of the same oil, stretched by the flow they
   // rode in. Each magnifies and bends what lies beneath it.
@@ -441,7 +496,7 @@ void main(){
       float z = sqrt(1.0 - r * r);
       vec3 N = normalize(vec3(q * 0.9, z));
       vec2 seen = c + (uv - c) * (0.45 + 0.25 * r * r) - N.xy * R * 0.12;
-      col = shade(seen) * 0.95 + uInk * 0.03;
+      col = shade(seen, seen) * 0.95 + uInk * 0.03;
       float nh = max(dot(N, H), 0.0);
       col += pow(nh, 140.0) * 1.1 + pow(nh, 18.0) * 0.08 + pow(1.0 - z, 3.0) * 0.3;
       col *= 1.0 - 0.3 * smoothstep(0.9, 1.0, r);
@@ -470,7 +525,7 @@ function sim(canvas, opts) {
   };
   const P = { advect: compile(ADVECT), mc: compile(MACCORMACK), flow: compile(FLOW), pv: compile(POUR_VEL),
               po: compile(POUR_OIL), pm: compile(POUR_MINE), div: compile(DIV), jac: compile(JACOBI),
-              grad: compile(GRAD), show: compile(DISPLAY), spread: compile(SPREAD), probe: compile(PROBE), dmap: compile(DOORMAP), crisp: compile(CRISP), ginit: compile(GROUNDINIT) };
+              grad: compile(GRAD), show: compile(DISPLAY), spread: compile(SPREAD), probe: compile(PROBE), dmap: compile(DOORMAP), crisp: compile(CRISP), ginit: compile(GROUNDINIT), sink: compile(SINK) };
   const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
@@ -488,7 +543,7 @@ function sim(canvas, opts) {
   const dye = pair(SD, SD, gl.RGBA16F, gl.RGBA), hat = tex(SD, SD, gl.RGBA16F, gl.RGBA), back = tex(SD, SD, gl.RGBA16F, gl.RGBA);
   const mine = pair(SM, SM, gl.RGBA16F, gl.RGBA);
   const gco = pair(SM, SM, gl.RGBA16F, gl.RGBA);
-  let bodies = [];
+  let bodies = [], sink = null;
   const mask = gl.createTexture();
   const probeT = tex(40, 1, gl.RGBA16F, gl.RGBA), probeBuf = new Float32Array(160);
   const DM = 96, dmapT = tex(DM, DM, gl.RGBA16F, gl.RGBA), dmapBuf = new Float32Array(DM * DM * 4);
@@ -502,6 +557,8 @@ function sim(canvas, opts) {
     bodies.forEach((b, i) => { B.set([b.c[0], b.c[1], b.R, 0], i * 4); BF.set(b.inv, i * 4); });
     gl.uniform4fv(prog.u("uBody[0]"), B); gl.uniform4fv(prog.u("uBodyF[0]"), BF); gl.uniform1i(prog.u("uBodyN"), bodies.length);
     gl.uniform1i(prog.u("uMarks"), bindT(6, mine.r.t));
+    gl.uniform4fv(prog.u("uSink"), sink ? [sink.c[0], sink.c[1], sink.A, sink.B] : [0, 0, 0, 0]);
+    gl.uniform2fv(prog.u("uSinkE"), sink ? sink.e : [1, 0]); gl.uniform1f(prog.u("uSinkK"), sink ? sink.k : 0);
     set(prog);
     if (target) { gl.bindFramebuffer(gl.FRAMEBUFFER, target.fb); gl.viewport(0, 0, target.w, target.h); }
     else { gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, canvas.width, canvas.height); }
@@ -540,7 +597,7 @@ function sim(canvas, opts) {
         gl.uniform1f(pr.u("uKind"), E.kind); gl.uniform1f(pr.u("uDir"), E.dir); gl.uniform1f(pr.u("uSpin"), E.spin);
         gl.uniform1f(pr.u("uComb"), E.comb); gl.uniform1f(pr.u("uFreq"), E.freq); gl.uniform1f(pr.u("uSeed"), E.seed);
         gl.uniform2fv(pr.u("uCenter"), E.center); gl.uniform1f(pr.u("uAmt"), amt * E.flow);
-        gl.uniform1f(pr.u("uDamp"), 0.978); gl.uniform1f(pr.u("uSpread"), 0.7); }); vel.swap();
+        gl.uniform1f(pr.u("uDamp"), 0.965); gl.uniform1f(pr.u("uSpread"), 0.7); }); vel.swap();
       run(P.advect, vel.w, pr => { gl.uniform1i(pr.u("uVel"), bindT(0, vel.r.t)); gl.uniform1i(pr.u("uSrc"), bindT(1, vel.r.t));
         gl.uniform2fv(pr.u("uTexel"), tx); gl.uniform1f(pr.u("uDt"), DT); gl.uniform4f(pr.u("uEmpty"), 0, 0, 0, 0); gl.uniform1f(pr.u("uKeep"), 0); }); vel.swap();
       run(P.div, div, pr => { gl.uniform1i(pr.u("uVel"), bindT(0, vel.r.t)); gl.uniform2fv(pr.u("uTexel"), tx); });
@@ -561,8 +618,9 @@ function sim(canvas, opts) {
       run(P.crisp, mine.w, pr => { gl.uniform1i(pr.u("uSrc"), bindT(0, mine.r.t)); }); mine.swap();
       for (let k = 0; k < 2; k++) {
         run(P.spread, dye.w, pr => { gl.uniform1i(pr.u("uSrc"), bindT(0, dye.r.t)); gl.uniform2f(pr.u("uTexel"), 1 / SD, 1 / SD);
-          gl.uniform1f(pr.u("uK"), 0.032); gl.uniform4fv(pr.u("uEmpty"), empty()); }); dye.swap();
+          gl.uniform1f(pr.u("uK"), 0.02); gl.uniform4fv(pr.u("uEmpty"), empty()); }); dye.swap();
       }
+      if (sink && sink.k > 0) { run(P.sink, dye.w, pr => { gl.uniform1i(pr.u("uSrc"), bindT(0, dye.r.t)); }); dye.swap(); }
     },
     // How much of each screen cell (DM x DM over the visible crop) is a site's pour.
     doorMap(crop) {
@@ -571,6 +629,7 @@ function sim(canvas, opts) {
       return { n: DM, v: i => dmapBuf[i * 4] };
     },
     setBodies(b) { bodies = b; },
+    setSink(x) { sink = x; },
     // Current (in uv per step) at up to 40 points.
     probe(pts) {
       const flat = new Float32Array(80); pts.forEach((q, i) => flat.set(q, i * 2));
@@ -630,12 +689,19 @@ function plan(state, doors, W, H, maxPours = MAX_POURS) {
       // the spout stays on screen, turning back at the edges
       if (x < crop[0] + 0.03 || x > crop[0] + crop[2] - 0.03) { heading = Math.PI - heading; x = clamp(x, crop[0] + 0.03, crop[0] + crop[2] - 0.03); }
       if (y < crop[1] + 0.03 || y > crop[1] + crop[3] - 0.03) { heading = -heading; y = clamp(y, crop[1] + 0.03, crop[1] + crop[3] - 0.03); }
-      path.push({ x, y, push: [Math.cos(heading) * 0.45, Math.sin(heading) * 0.45], c: col });
+      path.push({ x, y, push: [Math.cos(heading) * 1.2, Math.sin(heading) * 1.2], c: col });
     }
-    return { i, E, r, path, metal, amt: mine ? 1.7 : 1.2 };
+    return { i, E, r, path, metal, amt: mine ? 1.7 : 1.1 };
   };
   const streams = idx.map(i => stream(i, false));
-  return { n, crop, M, W, H, doors, toSim, mask: nameMask(doors, 1024, toSim, M), streams, mine: stream(n - 1, true) };
+  // The black hole: an oval horizon a little bigger than its name, rounder than the text.
+  const bh = doors.find(d => /^https:\/\/blackhole\./.test(d.url || ""));
+  let sink = null;
+  if (bh) {
+    const A = (bh.w / 2 + 14) / M, B = Math.max(bh.h / 2 + 14, (bh.w / 2 + 14) * 0.52) / M;
+    sink = { c: toSim(bh.x, bh.y), A, B, e: [Math.cos(bh.angle), -Math.sin(bh.angle)], k: 0 };
+  }
+  return { n, crop, M, W, H, doors, toSim, mask: nameMask(doors, 1024, toSim, M), streams, mine: stream(n - 1, true), sink };
 }
 
 // ---- live: the pour, watched ---------------------------------------------------------
@@ -645,8 +711,7 @@ export function createArt(canvas, opts = {}) {
   const S = sim(canvas, O);
   if (!S) return null;
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let genes, P, k, drop, perFrame, onVisit, done, mineDrop, drops, stepN, active, stepIdx;
-  const GAP = 2;
+  let genes, P, k, drop, perFrame, onVisit, done, mineDrop, drops, stepN;
   // Carry each site's drop with the current: its centre moves with the flow,
   // and the flow's stretch across it (read at four points on its rim) deforms
   // it. A pull back towards round keeps it a little firmer than the oil.
@@ -708,10 +773,8 @@ export function createArt(canvas, opts = {}) {
       k = 0; drop = 0; done = false; mineDrop = -1; stepN = 0; doorAt = [];
       drops = P.doors.map(d => ({ d, c: P.toSim(d.x, d.y), R: 0, full: d.rPx / P.M, on: false, F: [1, 0, 0, 1], inv: [1, 0, 0, 1] }));
       S.setBodies([]);
-      // A new stream starts every GAP steps while earlier ones are still
-      // pouring, so the count runs quickly while each stream oozes in slowly.
-      active = []; stepIdx = 0;
-      const total = P.streams.length * GAP + 20;
+      S.setSink(P.sink);
+      const total = P.streams.reduce((s, x) => s + x.path.length, 0);
       const seconds = clamp(6 + 1.6 * Math.log2(P.streams.length + 1), 7, 18);
       perFrame = reduce ? 1e9 : Math.max(1, Math.ceil(total / (seconds * 60)));
     },
@@ -719,22 +782,22 @@ export function createArt(canvas, opts = {}) {
     advance(budget, all) {
       let n = budget;
       while (n-- > 0 && !done) {
-        if (k < P.streams.length || active.length) {
-          if (k < P.streams.length && stepIdx % GAP === 0) {
-            const s = P.streams[k++];
-            active.push({ s, drop: 0 });
-            if (onVisit && s.i >= 0) onVisit(s.i + 1);
-          }
-          let E = null;
-          for (const a of active) {
-            const p = a.s.path[a.drop++];
-            S.pour(p.x, p.y, a.s.r, p.push, p.c, a.s.amt, false, a.s.metal, false);
-            E = a.s.E;
-          }
-          active = active.filter(a => a.drop < a.s.path.length);
-          stepAll(E || P.mine.E, 0.012);
-          stepIdx++;
+        if (k < P.streams.length) {
+          const s = P.streams[k], p = s.path[drop];
+          // it wakes as the pouring starts and pulls harder as the history goes on
+          if (P.sink) P.sink.k = clamp(0.15 + 0.85 * k / Math.max(1, P.streams.length * 0.3), 0, 1);
+          if (drop === 0 && onVisit && s.i >= 0) onVisit(s.i + 1);
+          if (s.door) {
+            // A site's drop pours in: it grows as its drops land, then the
+            // flow carries it like the oil around it, only more slowly.
+            const b = drops[P.doors.indexOf(s.door)];
+            b.R = b.full * (0.25 + 0.75 * (drop + 1) / s.path.length);
+            if (!b.on) { b.on = true; S.setBodies(drops.filter(x => x.on)); }
+          } else S.pour(p.x, p.y, s.r, p.push, p.c, s.amt, false, s.metal, false);
+          stepAll(s.E, 0.012);
+          if (++drop >= s.path.length) { drop = 0; k++; }
         } else if (mineDrop < 0) {
+          if (P.sink) P.sink.k = 1;
           mineDrop = 0; if (onVisit) onVisit(P.n);
           if (!all) return;
         } else if (mineDrop < MINE_DROPS + SETTLE) {

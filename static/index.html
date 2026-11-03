@@ -151,7 +151,7 @@ catch (e) {
   state = { n: 1, hash: hx, epoch_seed: hx, when: "", sites: [], engine: 3 };
 }
 // Each visit is drawn by the engine it was made with, forever.
-const E = await import({ 1: "/static/art-v1.js", 2: "/static/art-v2.js", 3: "/static/art-v3.js", 4: "/static/art-v4.js", 5: "/static/art-v5.js", 6: "/static/art-v6.js", 7: "/static/art-v7.js", 8: "/static/art-v8.js", 9: "/static/art-v9.js", 10: "/static/art-v10.js", 11: "/static/art-v11.js", 12: "/static/art-v12.js", 13: "/static/art-v13.js" }[state.engine] || "/static/art.js");
+const E = await import({ 1: "/static/art-v1.js", 2: "/static/art-v2.js", 3: "/static/art-v3.js", 4: "/static/art-v4.js", 5: "/static/art-v5.js", 6: "/static/art-v6.js", 7: "/static/art-v7.js", 8: "/static/art-v8.js", 9: "/static/art-v9.js", 10: "/static/art-v10.js", 11: "/static/art-v11.js", 12: "/static/art-v12.js", 13: "/static/art-v13.js", 14: "/static/art-v14.js" }[state.engine] || "/static/art.js");
 if (E.prepare) await E.prepare(state);   // engine 4 draws the whole history
 const { LOOP, genome, createArt, renderCard, fmtHash } = E;
 const css = E.css || ((c, a = 1) => `rgba(${c.map(x => Math.round(x * 255)).join(",")},${a})`);
