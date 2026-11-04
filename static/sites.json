@@ -1,4 +1,5 @@
 [
   {"name": "not alone", "url": "https://notalone.sepand.dev", "about": "say what's on your mind, see who feels it too"},
-  {"name": "black hole", "url": "https://blackhole.sepand.dev", "about": "fly around a black hole, worked out from einstein's equations"}
+  {"name": "black hole", "url": "https://blackhole.sepand.dev", "about": "fly around a black hole, worked out from einstein's equations"},
+  {"name": "chat", "url": "https://chat.sepand.dev", "about": "two people, one secret, one message at a time"}
 ]
