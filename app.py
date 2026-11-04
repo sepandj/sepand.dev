@@ -68,7 +68,7 @@ ALTER TABLE visits ADD COLUMN IF NOT EXISTS engine int NOT NULL DEFAULT 1;
 # Engine 16 (static/art.js) is engine 13 with each letter of the black hole
 # pulling the oil in. Engines 14 and 15 were tried and replaced; their files
 # (art-v14.js, art-v15.js) only draw their own visits.
-ENGINE = 16
+ENGINE = 17
 FIRST_SITES = [{"name": "not alone", "url": "https://notalone.sepand.dev"}]
 
 

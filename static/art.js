@@ -22,6 +22,13 @@ export const MAX_SITES = 8;
 export const fixedScale = true;
 export const namesInArt = true;
 
+// The black hole. Most of its force goes into the orbit, which moves oil without
+// using it up; the fall is what empties the screen, so it stays small.
+const SWIRL = 0.5;   // added to the current each step, and it builds up
+const FALL = 1.5;    // straight in, sim cells per step at the letters
+const REACH = 0.5;   // 1 = force as 1/r^2; lower carries further
+const EAT = 0.25;    // share of the oil at a letter's edge swallowed each step
+
 const TAU = Math.PI * 2;
 
 // ---- small helpers ---------------------------------------------------------
@@ -167,7 +174,7 @@ function nameMask(doors, size, toSim, M) {
 // the same place and shape as they are drawn. r: close to the letters (their
 // edges), g: the pull, their shapes blurred at a few scales and added.
 function blur(a, n, s) {
-  const r = Math.ceil(s * 3), k = [];
+  const r = Math.min(n - 1, Math.ceil(s * 3)), k = [];
   let sum = 0;
   for (let i = -r; i <= r; i++) { const w = Math.exp(-i * i / (2 * s * s)); k.push(w); sum += w; }
   const kk = k.map(w => w / sum), t = new Float32Array(n * n), o = new Float32Array(n * n);
@@ -176,6 +183,18 @@ function blur(a, n, s) {
   }
   for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
     let v = 0; for (let i = -r; i <= r; i++) { const yy = y + i; if (yy >= 0 && yy < n) v += t[yy * n + x] * kk[i + r]; } o[y * n + x] = v;
+  }
+  return o;
+}
+// The same for wide blurs, on a quarter-size grid: they have no fine detail to lose.
+function wideBlur(a, n, s) {
+  const m = n >> 2, d = new Float32Array(m * m), o = new Float32Array(n * n);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) d[(y >> 2) * m + (x >> 2)] += a[y * n + x] / 16;
+  const b = blur(d, m, s / 4);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const u = clamp((x + 0.5) / 4 - 0.5, 0, m - 1.001), v = clamp((y + 0.5) / 4 - 0.5, 0, m - 1.001);
+    const i = u | 0, j = v | 0, fu = u - i, fv = v - j, p = j * m + i;
+    o[y * n + x] = (b[p] * (1 - fu) + b[p + 1] * fu) * (1 - fv) + (b[p + m] * (1 - fu) + b[p + m + 1] * fu) * fv;
   }
   return o;
 }
@@ -191,12 +210,24 @@ function letterField(door, toSim, M, n = 256) {
   g.restore();
   const img = g.getImageData(0, 0, n, n).data, a = new Float32Array(n * n);
   for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) a[(n - 1 - y) * n + x] = img[(y * n + x) * 4] / 255;   // row 0 = bottom
-  const near = blur(a, n, 1.6), b1 = blur(a, n, 4), b2 = blur(a, n, 11), b3 = blur(a, n, 28);
+  // Gravity has no edge: blurs at every scale, weighted by size, add up to a
+  // 1/r potential, so the pull thins out forever and nothing marks where it ends.
+  const near = blur(a, n, 1.6), far = new Float32Array(n * n);
+  for (const s of [4, 8, 16, 32, 64, 128]) { const b = s < 16 ? blur(a, n, s) : wideBlur(a, n, s); for (let i = 0; i < n * n; i++) far[i] += s * b[i]; }
+  // Its slope, worked out here in full precision: far away the differences are
+  // too small to survive a half float.
+  const gx = new Float32Array(n * n), gy = new Float32Array(n * n);
   let mx = 0;
-  const far = new Float32Array(n * n);
-  for (let i = 0; i < n * n; i++) { far[i] = b1[i] + 0.7 * b2[i] + 0.5 * b3[i]; mx = Math.max(mx, far[i]); }
-  const data = new Float32Array(n * n * 2);
-  for (let i = 0; i < n * n; i++) { data[i * 2] = Math.min(1, near[i] * 1.6); data[i * 2 + 1] = far[i] / (mx || 1); }
+  for (let y = 1; y < n - 1; y++) for (let x = 1; x < n - 1; x++) {
+    const i = y * n + x;
+    gx[i] = far[i + 1] - far[i - 1]; gy[i] = far[i + n] - far[i - n];
+    mx = Math.max(mx, Math.hypot(gx[i], gy[i]));
+  }
+  const data = new Float32Array(n * n * 4);
+  for (let i = 0; i < n * n; i++) {
+    const l = Math.hypot(gx[i], gy[i]) / (mx || 1), k = l > 0 ? Math.pow(l, REACH) / (l * (mx || 1)) : 0;
+    data[i * 4] = Math.min(1, near[i] * 1.6); data[i * 4 + 1] = gx[i] * k; data[i * 4 + 2] = gy[i] * k;
+  }
   return { n, data };
 }
 
@@ -223,13 +254,9 @@ bool inBody(vec2 p){
 }
 bool inName(vec2 p){ return texture(uMask, p).r > 0.5 || inBody(p); }
 // The black hole's letters as a gravity field: r = right at their edges,
-// g = the pull, the letters' shapes blurred at a few scales (0 when there is none).
+// gb = which way the pull goes and how hard, 1 at its strongest (0 when there is none).
 uniform sampler2D uPot; uniform float uSinkK, uSinkOn;
-vec2 potG(vec2 p){
-  const float e = 1.0 / 256.0;
-  return vec2(texture(uPot, p + vec2(e, 0)).g - texture(uPot, p - vec2(e, 0)).g,
-              texture(uPot, p + vec2(0, e)).g - texture(uPot, p - vec2(0, e)).g) / (2.0 * e);
-}
+vec2 potG(vec2 p){ return texture(uPot, p).gb; }
 // Yours (r) and the sites' pours (b) are thick and keep to themselves.
 float locked(vec2 p){ vec4 m = texture(uMarks, p); return smoothstep(0.3, 0.6, max(m.r, m.b)); }
 `;
@@ -286,7 +313,7 @@ void main(){
   else                  f = c * 1.3;
   v += f * uAmt;
   // Around each letter of the black hole the oil starts to circle.
-  if (uSinkOn > 0.5) { vec2 g = potG(vUv); v += uSinkK * vec2(-g.y, g.x) * 0.0016 * (1.0 - locked(vUv)); }
+  if (uSinkOn > 0.5) { vec2 g = potG(vUv); v += uSinkK * vec2(-g.y, g.x) * ${SWIRL.toFixed(4)} * (1.0 - locked(vUv)); }
   if (inName(vUv)) v = vec2(0.0);
   o = vec4(v, 0.0, 1.0);
 }`;
@@ -370,10 +397,7 @@ void main(){
   vec2 v = texture(uVel, vUv).xy - vec2(R - L, T - B);
   // ...and falls towards it. Added after the pressure step, which would otherwise undo it.
   if (uSinkOn > 0.5) {
-    vec2 g = potG(vUv) * 0.035;
-    float l = length(g);
-    if (l > 1.1) g *= 1.1 / l;
-    v += uSinkK * g * (1.0 - locked(vUv));
+    v += uSinkK * potG(vUv) * ${FALL.toFixed(4)} * (1.0 - locked(vUv));
   }
   o = vec4(inName(vUv) ? vec2(0.0) : v, 0.0, 1.0);
 }`;
@@ -384,7 +408,7 @@ uniform sampler2D uSrc;
 void main(){
   vec4 d = texture(uSrc, vUv);
   float near = texture(uPot, vUv).r;
-  d *= 1.0 - 0.25 * smoothstep(0.1, 0.35, near) * uSinkK * (1.0 - locked(vUv));
+  d *= 1.0 - ${EAT.toFixed(4)} * smoothstep(0.1, 0.35, near) * uSinkK * (1.0 - locked(vUv));
   o = d;
 }`;
 
@@ -561,7 +585,7 @@ function sim(canvas, opts) {
   gl.bindTexture(gl.TEXTURE_2D, pot);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG16F, 1, 1, 0, gl.RG, gl.FLOAT, new Float32Array(2));
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 1, 1, 0, gl.RGBA, gl.FLOAT, new Float32Array(4));
   const probeT = tex(40, 1, gl.RGBA16F, gl.RGBA), probeBuf = new Float32Array(160);
   const DM = 96, dmapT = tex(DM, DM, gl.RGBA16F, gl.RGBA), dmapBuf = new Float32Array(DM * DM * 4);
 
@@ -646,12 +670,12 @@ function sim(canvas, opts) {
       return { n: DM, v: i => dmapBuf[i * 4] };
     },
     setBodies(b) { bodies = b; },
-    // field: { n, data: Float32Array(n * n * 2) } or null
+    // field: { n, data: Float32Array(n * n * 4) } or null
     setSink(field) {
       sinkOn = !!field;
       gl.bindTexture(gl.TEXTURE_2D, pot);
-      if (field) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG16F, field.n, field.n, 0, gl.RG, gl.FLOAT, field.data);
-      else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG16F, 1, 1, 0, gl.RG, gl.FLOAT, new Float32Array(2));
+      if (field) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, field.n, field.n, 0, gl.RGBA, gl.FLOAT, field.data);
+      else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 1, 1, 0, gl.RGBA, gl.FLOAT, new Float32Array(4));
     },
     setSinkK(k) { sinkK = k; },
     // Current (in uv per step) at up to 40 points.
